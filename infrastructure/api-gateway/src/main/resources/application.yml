@@ -1,0 +1,112 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      # Default filters applied to every route
+      default-filters:
+        # Adds X-Response-Time header to all responses (useful for debugging)
+        - AddResponseHeader=X-Response-Time, ${spring.application.name}
+
+      routes:
+        # -------------------------------------------------------
+        # IAM Service — open to unauthenticated requests
+        # JWT filter skips /api/auth/** (see OPEN_ENDPOINTS)
+        # -------------------------------------------------------
+        - id: iam-service
+          uri: lb://iam-service
+          predicates:
+            - Path=/api/auth/**
+
+        # -------------------------------------------------------
+        # Patient Service — requires valid JWT
+        # -------------------------------------------------------
+        - id: patient-service
+          uri: lb://patient-service
+          predicates:
+            - Path=/api/patients/**
+
+        # -------------------------------------------------------
+        # ECG Analysis Service — requires valid JWT
+        # Handles multipart/form-data uploads (ECG files)
+        # -------------------------------------------------------
+        - id: ecg-service
+          uri: lb://ecg-service
+          predicates:
+            - Path=/api/ecg/**
+
+        # -------------------------------------------------------
+        # AI Inference Service — requires valid JWT
+        # -------------------------------------------------------
+        - id: ai-inference-service
+          uri: lb://ai-inference-service
+          predicates:
+            - Path=/api/ai/**
+
+        # -------------------------------------------------------
+        # Reporting Service — requires valid JWT
+        # Produces PDF reports
+        # -------------------------------------------------------
+        - id: reporting-service
+          uri: lb://reporting-service
+          predicates:
+            - Path=/api/reports/**
+
+      # Global CORS configuration so the React frontend on port 3000
+      # can make requests to the gateway on port 8080
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://localhost:5173"  # Vite dev server default port
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+
+    # Increase max file upload size for ECG and angiogram images
+    # (Spring Cloud Gateway uses Netty, not Tomcat, so this is how you set it)
+    loadbalancer:
+      ribbon:
+        enabled: false   # Use Spring Cloud LoadBalancer, not Ribbon (deprecated)
+
+# JWT secret is injected via environment variable from Docker Compose
+jwt:
+  secret: ${JWT_SECRET}
+
+# Eureka client configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka}
+    # Fetch registry every 5 seconds (default is 30s)
+    # Faster updates mean routes become available sooner after service starts
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, gateway
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true  # Exposes /actuator/gateway/routes for debugging
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    com.heartsync.gateway: DEBUG

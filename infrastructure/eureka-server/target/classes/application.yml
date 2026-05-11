@@ -1,0 +1,45 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    # This name is what shows up in the Eureka dashboard
+    name: eureka-server
+
+eureka:
+  instance:
+    hostname: eureka-server   # Inside Docker, other containers reach us by this hostname
+
+  client:
+    # This IS the registry — it should NOT register with itself
+    # or try to fetch registry data from itself
+    register-with-eureka: false
+    fetch-registry: false
+
+    service-url:
+      # The URL that other services use to register with us.
+      # ${EUREKA_SERVER_URL} is injected by Docker Compose.
+      # Falls back to localhost for local development.
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka}
+
+  server:
+    # How long to wait before removing an instance that stopped sending heartbeats.
+    # Default is 90s — reduced here for faster demo feedback.
+    eviction-interval-timer-in-ms: 5000
+    # Disable self-preservation in development so stale instances
+    # are removed immediately rather than preserved during network blips.
+    enable-self-preservation: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.netflix.eureka: WARN
+    com.netflix.discovery: WARN

@@ -1,0 +1,455 @@
+# =============================================================
+#  HeartSync — Full Platform Docker Compose
+#
+#  Startup order (enforced by depends_on + healthchecks):
+#    1. Databases (postgres x4, mongodb)
+#    2. Message broker (rabbitmq)
+#    3. Object store (minio)
+#    4. Service registry (eureka)
+#    5. API gateway
+#    6. Microservices (iam, patient, ecg, ai, reporting)
+#    7. Frontend
+#
+#  To start only infrastructure (before services are built):
+#    docker compose --profile infra up -d
+#
+#  To start everything once all services are built:
+#    docker compose up -d --build
+# =============================================================
+
+services:
+
+  # ===========================================================
+  #  DATABASES
+  #  Each service gets its own isolated PostgreSQL instance.
+  #  This is the "database-per-service" pattern — a core
+  #  microservices principle that prevents tight coupling.
+  # ===========================================================
+
+  postgres-patient:
+    image: postgres:16-alpine
+    container_name: postgres-patient
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PATIENT_DB_NAME}
+      POSTGRES_USER: ${PATIENT_DB_USER}
+      POSTGRES_PASSWORD: ${PATIENT_DB_PASSWORD}
+    ports:
+      - "${PATIENT_DB_PORT}:5432"
+    volumes:
+      - postgres-patient-data:/var/lib/postgresql/data
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PATIENT_DB_USER} -d ${PATIENT_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["infra", "all"]
+
+  postgres-iam:
+    image: postgres:16-alpine
+    container_name: postgres-iam
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${IAM_DB_NAME}
+      POSTGRES_USER: ${IAM_DB_USER}
+      POSTGRES_PASSWORD: ${IAM_DB_PASSWORD}
+    ports:
+      - "${IAM_DB_PORT}:5432"
+    volumes:
+      - postgres-iam-data:/var/lib/postgresql/data
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${IAM_DB_USER} -d ${IAM_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["infra", "all"]
+
+  postgres-ecg:
+    image: postgres:16-alpine
+    container_name: postgres-ecg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ECG_DB_NAME}
+      POSTGRES_USER: ${ECG_DB_USER}
+      POSTGRES_PASSWORD: ${ECG_DB_PASSWORD}
+    ports:
+      - "${ECG_DB_PORT}:5432"
+    volumes:
+      - postgres-ecg-data:/var/lib/postgresql/data
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ECG_DB_USER} -d ${ECG_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["infra", "all"]
+
+  postgres-reporting:
+    image: postgres:16-alpine
+    container_name: postgres-reporting
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${REPORTING_DB_NAME}
+      POSTGRES_USER: ${REPORTING_DB_USER}
+      POSTGRES_PASSWORD: ${REPORTING_DB_PASSWORD}
+    ports:
+      - "${REPORTING_DB_PORT}:5432"
+    volumes:
+      - postgres-reporting-data:/var/lib/postgresql/data
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${REPORTING_DB_USER} -d ${REPORTING_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["infra", "all"]
+
+  # --- MongoDB for AI Inference Service ---
+  # MongoDB is better suited for AI metadata: flexible schema,
+  # stores JSON-like documents (segmentation results, model outputs).
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB_NAME}
+    ports:
+      - "${MONGO_PORT}:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["infra", "all"]
+
+  # ===========================================================
+  #  MESSAGE BROKER — RabbitMQ
+  #
+  #  This is the backbone of async (event-driven) communication.
+  #  Services publish events here instead of calling each other
+  #  directly. This decouples them completely.
+  #
+  #  Queues we'll use:
+  #    ecg.analysis.queue     — ECG service → AI service
+  #    ai.results.queue       — AI service → Reporting service
+  #    report.ready.queue     — Reporting service → Frontend (WebSocket/SSE)
+  #
+  #  Management UI: http://localhost:15672
+  # ===========================================================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "${RABBITMQ_PORT}:5672"       # AMQP protocol (services connect here)
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"  # Web management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles: ["infra", "all"]
+
+  # ===========================================================
+  #  OBJECT STORAGE — MinIO
+  #
+  #  S3-compatible storage for:
+  #    - ECG image/PDF uploads
+  #    - Generated clinical report PDFs
+  #    - Angiogram images
+  #
+  #  Console UI: http://localhost:9001
+  # ===========================================================
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_PORT}:9000"         # S3 API
+      - "${MINIO_CONSOLE_PORT}:9001" # Web console
+    volumes:
+      - minio-data:/data
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles: ["infra", "all"]
+
+  # ===========================================================
+  #  SERVICE REGISTRY — Eureka Server
+  #
+  #  Every microservice registers itself here on startup.
+  #  The API Gateway asks Eureka "where is patient-service?"
+  #  instead of using hardcoded IPs. This enables:
+  #    - Dynamic service discovery
+  #    - Load balancing across multiple instances
+  #    - Automatic removal of crashed instances
+  #
+  #  Dashboard: http://localhost:8761
+  # ===========================================================
+  eureka-server:
+    build:
+      context: ./infrastructure/eureka-server
+      dockerfile: Dockerfile
+    container_name: eureka-server
+    restart: unless-stopped
+    ports:
+      - "${EUREKA_PORT}:8761"
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    profiles: ["infra", "all"]
+
+  # ===========================================================
+  #  API GATEWAY — Spring Cloud Gateway
+  #
+  #  The single entry point for ALL client traffic.
+  #  Responsibilities:
+  #    1. Route /api/patients/** → patient-service
+  #    2. Route /api/auth/**     → iam-service
+  #    3. Route /api/ecg/**      → ecg-service
+  #    4. Route /api/ai/**       → ai-inference-service
+  #    5. Route /api/reports/**  → reporting-service
+  #    6. Validate JWT tokens before forwarding requests
+  #    7. Inject X-User-Id / X-User-Role headers for services
+  #
+  #  Clients (frontend, Postman) never talk to services directly.
+  # ===========================================================
+  api-gateway:
+    build:
+      context: ./infrastructure/api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT}:8080"
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["infra", "all"]
+
+  # ===========================================================
+  #  MICROSERVICES
+  #  These are defined here but built progressively.
+  #  They use profile "all" so they only start when explicitly
+  #  requested: docker compose --profile all up -d
+  # ===========================================================
+
+  iam-service:
+    build:
+      context: ./services/iam-service
+      dockerfile: Dockerfile
+    container_name: iam-service
+    restart: unless-stopped
+    ports:
+      - "${IAM_SERVICE_PORT}:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-iam:5432/${IAM_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${IAM_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${IAM_DB_PASSWORD}
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      postgres-iam:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+  patient-service:
+    build:
+      context: ./services/patient-service
+      dockerfile: Dockerfile
+    container_name: patient-service
+    restart: unless-stopped
+    ports:
+      - "${PATIENT_SERVICE_PORT}:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-patient:5432/${PATIENT_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${PATIENT_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PATIENT_DB_PASSWORD}
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+    depends_on:
+      postgres-patient:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+  ecg-service:
+    build:
+      context: ./services/ecg-service
+      dockerfile: Dockerfile
+    container_name: ecg-service
+    restart: unless-stopped
+    ports:
+      - "${ECG_SERVICE_PORT}:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-ecg:5432/${ECG_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${ECG_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${ECG_DB_PASSWORD}
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      postgres-ecg:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+  ai-inference-service:
+    build:
+      context: ./services/ai-inference-service
+      dockerfile: Dockerfile
+    container_name: ai-inference-service
+    restart: unless-stopped
+    ports:
+      - "${AI_SERVICE_PORT}:8084"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGO_DB_NAME}?authSource=admin
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+  reporting-service:
+    build:
+      context: ./services/reporting-service
+      dockerfile: Dockerfile
+    container_name: reporting-service
+    restart: unless-stopped
+    ports:
+      - "${REPORTING_SERVICE_PORT}:8085"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-reporting:5432/${REPORTING_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${REPORTING_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${REPORTING_DB_PASSWORD}
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      postgres-reporting:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+  # ===========================================================
+  #  FRONTEND — React + Vite
+  # ===========================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT}:80"
+    environment:
+      VITE_API_BASE_URL: http://localhost:${GATEWAY_PORT}
+    depends_on:
+      - api-gateway
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
+# =============================================================
+#  NETWORKS
+#  All containers communicate on this isolated bridge network.
+#  Services talk to each other using container names as hostnames
+#  (e.g., "postgres-patient:5432", "rabbitmq:5672").
+# =============================================================
+networks:
+  heartsync-network:
+    driver: bridge
+    name: heartsync-network
+
+# =============================================================
+#  VOLUMES
+#  Named volumes persist data between container restarts.
+#  Without these, all data is lost when containers are removed.
+# =============================================================
+volumes:
+  postgres-patient-data:
+  postgres-iam-data:
+  postgres-ecg-data:
+  postgres-reporting-data:
+  mongodb-data:
+  rabbitmq-data:
+  minio-data:
