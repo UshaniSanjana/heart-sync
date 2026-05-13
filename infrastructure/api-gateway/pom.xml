@@ -57,6 +57,12 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
+    <!-- Spring Security (WebFlux) — required for @EnableWebFluxSecurity, ServerHttpSecurity, SecurityWebFilterChain -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
     <!-- JWT token parsing and validation -->
     <dependency>
       <groupId>io.jsonwebtoken</groupId>
