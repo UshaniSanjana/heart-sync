@@ -5,9 +5,14 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+const AUTH_ENDPOINTS = ['/auth/login', '/auth/register']
+
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  const isAuthEndpoint = AUTH_ENDPOINTS.some(ep => config.url?.startsWith(ep))
+  if (!isAuthEndpoint) {
+    const token = localStorage.getItem('token')
+    if (token) config.headers.Authorization = `Bearer ${token}`
+  }
   return config
 })
 
@@ -26,8 +31,8 @@ api.interceptors.response.use(
 export const login = (email, password) =>
   api.post('/auth/login', { email, password })
 
-export const register = (name, email, password, role) =>
-  api.post('/auth/register', { name, email, password, role })
+export const register = (fullName, email, password, role) =>
+  api.post('/auth/register', { fullName, email, password, role })
 
 // --- Patients ---
 export const getPatients = () => api.get('/patients')
