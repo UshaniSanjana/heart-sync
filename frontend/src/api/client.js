@@ -59,6 +59,14 @@ export const getEcgRecord = (id) => api.get(`/ecg/${id}`)
 // --- AI Results ---
 export const getAiResult = (ecgId) => api.get(`/ai/results/${ecgId}`)
 
+export const analyzeAngiogram = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/ai/angiogram/analyze', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 // --- Reports ---
 export const getReports = (patientId) =>
   api.get(`/reports/patient/${patientId}`)
