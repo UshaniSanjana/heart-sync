@@ -5,7 +5,7 @@ import {
   getPatient,
   getEcgRecords,
   uploadEcg,
-  getAiResult,
+  analyzeAngiogram,
   getReports,
   downloadReport,
 } from '../api/client.js'
@@ -32,6 +32,25 @@ function Field({ label, value }) {
   )
 }
 
+function RiskBadge({ risk }) {
+  const map = {
+    HIGH:     'bg-red-100 text-red-700',
+    MODERATE: 'bg-orange-100 text-orange-700',
+    LOW:      'bg-green-100 text-green-700',
+  }
+  return <span className={`badge ${map[risk] ?? 'bg-slate-100 text-slate-600'}`}>{risk}</span>
+}
+
+function SeverityBadge({ severity }) {
+  const map = {
+    CRITICAL: 'bg-red-100 text-red-700',
+    HIGH:     'bg-orange-100 text-orange-700',
+    MODERATE: 'bg-yellow-100 text-yellow-700',
+    LOW:      'bg-green-100 text-green-700',
+  }
+  return <span className={`badge ${map[severity?.toUpperCase()] ?? 'bg-slate-100 text-slate-600'}`}>{severity}</span>
+}
+
 function StatusBadge({ status }) {
   const map = {
     PENDING:    'bg-yellow-100 text-yellow-700',
@@ -52,22 +71,26 @@ function StatusBadge({ status }) {
 export default function PatientPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const fileRef = useRef()
+  const fileRef   = useRef()
+  const angioRef  = useRef()
 
   const [patient, setPatient]   = useState(null)
   const [ecgList, setEcgList]   = useState([])
   const [reports, setReports]   = useState([])
   const [selectedEcg, setSelectedEcg] = useState(null)
-  const [aiResult, setAiResult] = useState(null)
 
   const [loadingPatient, setLoadingPatient] = useState(true)
   const [loadingEcg, setLoadingEcg]         = useState(true)
   const [uploading, setUploading]           = useState(false)
-  const [loadingAi, setLoadingAi]           = useState(false)
   const [loadingReports, setLoadingReports] = useState(true)
   const [downloadingId, setDownloadingId]   = useState(null)
 
   const [uploadError, setUploadError] = useState('')
+
+  // angiogram analysis state
+  const [angioResult,   setAngioResult]   = useState(null)
+  const [analyzingAngio, setAnalyzingAngio] = useState(false)
+  const [angioError,    setAngioError]    = useState('')
 
   // initial data load
   useEffect(() => {
@@ -77,17 +100,6 @@ export default function PatientPage() {
       getReports(id).then(({ data }) => setReports(data)).finally(() => setLoadingReports(false)),
     ])
   }, [id])
-
-  // load AI result whenever selected ECG changes
-  useEffect(() => {
-    if (!selectedEcg) { setAiResult(null); return }
-    setLoadingAi(true)
-    setAiResult(null)
-    getAiResult(selectedEcg.id)
-      .then(({ data }) => setAiResult(data))
-      .catch(() => setAiResult(null))
-      .finally(() => setLoadingAi(false))
-  }, [selectedEcg])
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -103,6 +115,23 @@ export default function PatientPage() {
     } finally {
       setUploading(false)
       fileRef.current.value = ''
+    }
+  }
+
+  const handleAngioUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setAnalyzingAngio(true)
+    setAngioError('')
+    setAngioResult(null)
+    try {
+      const { data } = await analyzeAngiogram(file)
+      setAngioResult(data)
+    } catch (err) {
+      setAngioError(err.response?.data?.detail ?? err.response?.data?.message ?? 'Analysis failed.')
+    } finally {
+      setAnalyzingAngio(false)
+      angioRef.current.value = ''
     }
   }
 
@@ -286,55 +315,121 @@ export default function PatientPage() {
           {/* ── AI + Reports column ─────────────────────────────────────── */}
           <div className="space-y-6">
 
-            {/* AI Inference */}
-            <Section title="AI Coronary Segmentation">
-              {!selectedEcg ? (
-                <p className="text-sm text-slate-400 text-center py-6">Select an ECG study to view AI results.</p>
-              ) : loadingAi ? (
-                <div className="flex justify-center py-6">
-                  <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : !aiResult ? (
-                <p className="text-sm text-slate-400 text-center py-6">AI analysis not yet available for this study.</p>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="Calcium score" value={aiResult.calciumScore} />
-                    <Field label="Ejection fraction" value={aiResult.ejectionFraction ? `${aiResult.ejectionFraction}%` : null} />
-                    <Field label="Risk level" value={aiResult.riskLevel} />
-                    <Field label="Confidence" value={aiResult.modelConfidence ? `${(aiResult.modelConfidence * 100).toFixed(0)}%` : null} />
+            {/* AI Angiogram Analysis */}
+            <Section title="AI Angiogram Analysis">
+              <div className="mb-4">
+                <input
+                  ref={angioRef}
+                  type="file"
+                  accept=".dcm,.png,.jpg,.jpeg,.tiff,.tif"
+                  className="hidden"
+                  onChange={handleAngioUpload}
+                />
+                <button
+                  onClick={() => angioRef.current.click()}
+                  disabled={analyzingAngio}
+                  className="btn-primary w-full justify-center"
+                >
+                  {analyzingAngio ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Analyzing…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      Upload Angiogram Image
+                    </>
+                  )}
+                </button>
+                {angioError && (
+                  <p className="mt-2 text-xs text-red-600">{angioError}</p>
+                )}
+              </div>
+
+              {!angioResult && !analyzingAngio && (
+                <p className="text-sm text-slate-400 text-center py-4">
+                  Upload a coronary angiogram (.dcm, .png, .jpg) to run segmentation and stenosis analysis.
+                </p>
+              )}
+
+              {angioResult && (
+                <div className="space-y-5">
+
+                  {/* Stats row */}
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Overall Risk</p>
+                      <RiskBadge risk={angioResult.overallRisk} />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Branches Detected</p>
+                      <p className="text-sm font-semibold text-slate-800">{angioResult.totalBranches}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Model Confidence</p>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {(angioResult.confidence * 100).toFixed(1)}%
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Coronary vessels */}
-                  {aiResult.coronaryFindings?.length > 0 && (
+                  {/* Segmentation overlay */}
+                  {angioResult.overlayBase64 && (
                     <div>
-                      <p className="text-xs text-slate-400 mb-2">Coronary findings</p>
-                      <div className="space-y-2">
-                        {aiResult.coronaryFindings.map((cf, i) => (
-                          <div key={i} className="rounded-lg bg-slate-50 border border-slate-100 px-4 py-3">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-sm font-medium text-slate-700">{cf.vessel}</span>
-                              <span className={`badge ${
-                                cf.stenosisPercentage >= 70 ? 'bg-red-100 text-red-700' :
-                                cf.stenosisPercentage >= 50 ? 'bg-orange-100 text-orange-700' :
-                                'bg-green-100 text-green-700'
-                              }`}>
-                                {cf.stenosisPercentage}% stenosis
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500">{cf.classification} — {cf.plaqueMorphology}</p>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-xs text-slate-400 mb-2">Segmentation Overlay</p>
+                      <img
+                        src={`data:image/png;base64,${angioResult.overlayBase64}`}
+                        alt="Coronary segmentation overlay"
+                        className="w-full rounded-lg border border-slate-200"
+                      />
                     </div>
                   )}
 
-                  {aiResult.clinicalRecommendation && (
-                    <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
-                      <p className="text-xs text-blue-600 font-medium mb-1">Clinical recommendation</p>
-                      <p className="text-sm text-blue-800">{aiResult.clinicalRecommendation}</p>
+                  {/* Lesion table */}
+                  {angioResult.lesions?.length > 0 ? (
+                    <div>
+                      <p className="text-xs text-slate-400 mb-2">
+                        Detected Lesions ({angioResult.lesions.length})
+                      </p>
+                      <div className="overflow-x-auto rounded-lg border border-slate-100">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50">
+                            <tr className="text-slate-500">
+                              <th className="text-left px-3 py-2 font-medium">#</th>
+                              <th className="text-left px-3 py-2 font-medium">Severity</th>
+                              <th className="text-right px-3 py-2 font-medium">DS%</th>
+                              <th className="text-right px-3 py-2 font-medium">MLD (px)</th>
+                              <th className="text-right px-3 py-2 font-medium">RVD (px)</th>
+                              <th className="text-right px-3 py-2 font-medium">Length (px)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {angioResult.lesions.map((l) => (
+                              <tr key={l.rank} className="hover:bg-slate-50">
+                                <td className="px-3 py-2 text-slate-500">{l.rank}</td>
+                                <td className="px-3 py-2"><SeverityBadge severity={l.severity} /></td>
+                                <td className="px-3 py-2 text-right font-semibold text-slate-700">
+                                  {l.dsPercent.toFixed(1)}%
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-600">{l.mldPx.toFixed(1)}</td>
+                                <td className="px-3 py-2 text-right text-slate-600">{l.rvdPx.toFixed(1)}</td>
+                                <td className="px-3 py-2 text-right text-slate-600">{l.lengthPx.toFixed(1)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 text-center py-2">No significant lesions detected.</p>
                   )}
+
+                  <p className="text-xs text-slate-300">
+                    Segmentation: {angioResult.segmentationTimeMs}ms · QCA: {angioResult.qcaTimeMs}ms
+                  </p>
                 </div>
               )}
             </Section>
