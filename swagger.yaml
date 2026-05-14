@@ -1,0 +1,817 @@
+openapi: 3.0.3
+info:
+  title: HeartSync API
+  description: >
+    HeartSync is a microservices-based clinical platform for ECG analysis and
+    cardiac reporting. All requests are routed through the API Gateway at port 8080.
+    Most endpoints (except auth) require a valid JWT Bearer token.
+  version: 1.0.0
+  contact:
+    name: HeartSync Team
+
+servers:
+  - url: http://localhost:8080
+    description: API Gateway (primary entry point)
+  - url: http://localhost:8082
+    description: IAM Service (direct)
+  - url: http://localhost:8081
+    description: Patient Service (direct)
+  - url: http://localhost:8083
+    description: ECG Service (direct)
+  - url: http://localhost:8084
+    description: AI Inference Service (direct)
+  - url: http://localhost:8085
+    description: Reporting Service (direct)
+
+tags:
+  - name: Authentication
+    description: User registration and login (IAM Service — port 8082)
+  - name: Patients
+    description: Patient record management (Patient Service — port 8081)
+  - name: ECG
+    description: ECG file upload and record retrieval (ECG Service — port 8083)
+  - name: AI Analysis
+    description: AI-generated cardiac analysis results (AI Inference Service — port 8084)
+  - name: Reports
+    description: Clinical report generation and download (Reporting Service — port 8085)
+
+security:
+  - BearerAuth: []
+
+paths:
+
+  # ──────────────────────────────────────────────
+  # IAM SERVICE  (/api/auth)
+  # ──────────────────────────────────────────────
+
+  /api/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a new clinician
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: doctor@hospital.com
+              password: SecurePass123
+              fullName: Dr. Jane Smith
+              role: DOCTOR
+      responses:
+        '200':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Validation error (e.g. password too short, invalid email)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login and obtain a JWT token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: doctor@hospital.com
+              password: SecurePass123
+      responses:
+        '200':
+          description: Login successful — token valid for 24 hours
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Verify gateway header forwarding
+      description: >
+        Returns the X-User-* headers injected by the API Gateway. Useful for
+        confirming that JWT validation and header propagation are working correctly.
+      responses:
+        '200':
+          description: Authenticated user context from gateway headers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserContext'
+        '401':
+          description: Missing or invalid JWT token
+
+  # ──────────────────────────────────────────────
+  # PATIENT SERVICE  (/api/patients)
+  # ──────────────────────────────────────────────
+
+  /api/patients:
+    post:
+      tags: [Patients]
+      summary: Create a new patient record
+      description: The gateway injects `X-User-Id` automatically from the JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientRequest'
+            example:
+              firstName: John
+              lastName: Doe
+              dateOfBirth: '1980-05-15'
+              gender: MALE
+              email: john.doe@email.com
+              phone: '+1-555-0100'
+              address: '123 Main St, Springfield'
+              bloodType: A_POSITIVE
+              medicalHistory: Hypertension, Type 2 Diabetes
+              referringPhysician: Dr. Alice Brown
+              consentGiven: true
+      responses:
+        '201':
+          description: Patient created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    get:
+      tags: [Patients]
+      summary: List all patients, optionally filtered by name
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: Partial name search (first or last name)
+          schema:
+            type: string
+          example: John
+      responses:
+        '200':
+          description: List of patient records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PatientResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/patients/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Patient UUID
+
+    get:
+      tags: [Patients]
+      summary: Get a patient record by ID
+      responses:
+        '200':
+          description: Patient record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Patients]
+      summary: Update a patient record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientRequest'
+      responses:
+        '200':
+          description: Updated patient record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Patients]
+      summary: Delete a patient record
+      responses:
+        '204':
+          description: Patient deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ──────────────────────────────────────────────
+  # ECG SERVICE  (/api/ecg)
+  # ──────────────────────────────────────────────
+
+  /api/ecg/upload:
+    post:
+      tags: [ECG]
+      summary: Upload an ECG file for a patient
+      description: >
+        Accepts a multipart form upload (max 50 MB). The file is stored in MinIO
+        and an async analysis task is triggered via RabbitMQ. The returned record
+        will initially have `status: PENDING`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, patientId]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: ECG file (PDF, DICOM, or image)
+                patientId:
+                  type: string
+                  description: UUID of the patient
+      responses:
+        '200':
+          description: ECG record created and analysis queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcgRecord'
+        '400':
+          description: Missing file or patientId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: File exceeds 50 MB limit
+
+  /api/ecg/{id}:
+    get:
+      tags: [ECG]
+      summary: Get an ECG record by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ECG record UUID
+      responses:
+        '200':
+          description: ECG record (includes analysis results when status is COMPLETED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcgRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/ecg/patient/{patientId}:
+    get:
+      tags: [ECG]
+      summary: Get all ECG records for a patient
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Patient UUID
+      responses:
+        '200':
+          description: List of ECG records for the patient
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EcgRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ──────────────────────────────────────────────
+  # AI INFERENCE SERVICE  (/api/ai)
+  # ──────────────────────────────────────────────
+
+  /api/ai/results/{id}:
+    get:
+      tags: [AI Analysis]
+      summary: Get an AI analysis result by its own ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: MongoDB ObjectId of the analysis result
+      responses:
+        '200':
+          description: AI analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/ai/results/ecg/{ecgRecordId}:
+    get:
+      tags: [AI Analysis]
+      summary: Get the AI analysis result for a specific ECG record
+      parameters:
+        - name: ecgRecordId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ECG record UUID
+      responses:
+        '200':
+          description: AI analysis result linked to the ECG record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/ai/results/patient/{patientId}:
+    get:
+      tags: [AI Analysis]
+      summary: Get all AI analysis results for a patient
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Patient UUID
+      responses:
+        '200':
+          description: All AI analysis results for the patient (sorted by analyzedAt desc)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AnalysisResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ──────────────────────────────────────────────
+  # REPORTING SERVICE  (/api/reports)
+  # ──────────────────────────────────────────────
+
+  /api/reports/{id}:
+    get:
+      tags: [Reports]
+      summary: Get clinical report metadata by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Clinical report UUID
+      responses:
+        '200':
+          description: Clinical report metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClinicalReport'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/reports/patient/{patientId}:
+    get:
+      tags: [Reports]
+      summary: Get all clinical reports for a patient
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Patient UUID
+      responses:
+        '200':
+          description: List of clinical reports for the patient
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClinicalReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/reports/{id}/download:
+    get:
+      tags: [Reports]
+      summary: Download a clinical report as PDF
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Clinical report UUID
+      responses:
+        '200':
+          description: PDF file
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: inline; filename="report-<id>.pdf"
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+# ──────────────────────────────────────────────
+# COMPONENTS
+# ──────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT obtained from POST /api/auth/login. Pass as:
+        `Authorization: Bearer <token>`. Token expires after 24 hours.
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+
+    # ── Auth ──────────────────────────────────
+
+    RegisterRequest:
+      type: object
+      required: [email, password, fullName, role]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          description: Minimum 8 characters
+        fullName:
+          type: string
+        role:
+          type: string
+          enum: [DOCTOR, NURSE, ADMIN]
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT Bearer token
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Token lifetime in seconds (86400 = 24 hours)
+          example: 86400
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        fullName:
+          type: string
+        role:
+          type: string
+          enum: [DOCTOR, NURSE, ADMIN]
+
+    UserContext:
+      type: object
+      description: Gateway-injected user context headers
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [DOCTOR, NURSE, ADMIN]
+        email:
+          type: string
+          format: email
+
+    # ── Patient ───────────────────────────────
+
+    PatientRequest:
+      type: object
+      required: [firstName, lastName, consentGiven]
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+          example: '1980-05-15'
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+        bloodType:
+          type: string
+          enum: [A_POSITIVE, A_NEGATIVE, B_POSITIVE, B_NEGATIVE, AB_POSITIVE, AB_NEGATIVE, O_POSITIVE, O_NEGATIVE]
+        medicalHistory:
+          type: string
+        referringPhysician:
+          type: string
+        consentGiven:
+          type: boolean
+
+    PatientResponse:
+      allOf:
+        - $ref: '#/components/schemas/PatientRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            registeredBy:
+              type: string
+              format: uuid
+              description: userId of the clinician who created the record
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    # ── ECG ───────────────────────────────────
+
+    EcgRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        uploadedBy:
+          type: string
+          format: uuid
+          description: userId of the clinician who uploaded the file
+        fileKey:
+          type: string
+          description: MinIO object key for the stored ECG file
+        fileName:
+          type: string
+          description: Original filename at upload
+        status:
+          type: string
+          enum: [PENDING, ANALYZING, COMPLETED, FAILED]
+          description: PENDING → ANALYZING → COMPLETED (or FAILED)
+        heartRate:
+          type: integer
+          description: Beats per minute (populated after analysis)
+        rhythm:
+          type: string
+          description: e.g. "Normal Sinus Rhythm"
+        prInterval:
+          type: integer
+          description: PR interval in milliseconds
+        qrsDuration:
+          type: integer
+          description: QRS duration in milliseconds
+        qtInterval:
+          type: integer
+          description: QT interval in milliseconds
+        findings:
+          type: string
+          description: Free-text clinical findings from analysis
+        createdAt:
+          type: string
+          format: date-time
+        analyzedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── AI Analysis ───────────────────────────
+
+    AnalysisResult:
+      type: object
+      properties:
+        id:
+          type: string
+          description: MongoDB ObjectId
+        ecgRecordId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [COMPLETED]
+        coronaryFindings:
+          type: object
+          description: Map of artery name → finding (Normal / Stenosis / Occlusion)
+          additionalProperties:
+            type: string
+          example:
+            LAD: Normal
+            RCA: Stenosis
+            LCX: Normal
+        estimatedStenosisPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Estimated stenosis percentage (0–100)
+        calciumScore:
+          type: string
+          example: Within normal range
+        dominance:
+          type: string
+          enum: [Right, Left]
+          description: Coronary dominance pattern
+        overallRisk:
+          type: string
+          enum: [LOW, MODERATE, HIGH]
+        rawModelOutput:
+          type: string
+          description: Raw JSON string returned by the AI model
+        analyzedAt:
+          type: string
+          format: date-time
+
+    # ── Reports ───────────────────────────────
+
+    ClinicalReport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        ecgRecordId:
+          type: string
+          format: uuid
+        aiAnalysisId:
+          type: string
+          description: MongoDB ObjectId of the linked AnalysisResult
+        status:
+          type: string
+          enum: [GENERATING, COMPLETED, FAILED]
+        overallRisk:
+          type: string
+          enum: [LOW, MODERATE, HIGH]
+        clinicalSummary:
+          type: string
+          description: Narrative clinical summary generated for the report
+        finalImpression:
+          type: string
+          description: Physician-facing final impression
+        pdfKey:
+          type: string
+          description: MinIO object key for the generated PDF
+        generatedBy:
+          type: string
+          format: uuid
+          description: userId of the clinician who triggered the report
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Shared ────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
