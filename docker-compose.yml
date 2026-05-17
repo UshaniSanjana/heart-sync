@@ -350,6 +350,16 @@ services:
       - heartsync-network
     profiles: ["all"]
 
+  ai-python-service:
+    build:
+      context: ./services/ai-python-service
+      dockerfile: Dockerfile
+    container_name: ai-python-service
+    restart: unless-stopped
+    networks:
+      - heartsync-network
+    profiles: ["all"]
+
   ai-inference-service:
     build:
       context: ./services/ai-inference-service
@@ -368,6 +378,8 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: heartsync
+      AI_PYTHON_URL: http://ai-python-service:8000
     depends_on:
       mongodb:
         condition: service_healthy
@@ -375,6 +387,8 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
+      ai-python-service:
+        condition: service_started
     networks:
       - heartsync-network
     profiles: ["all"]

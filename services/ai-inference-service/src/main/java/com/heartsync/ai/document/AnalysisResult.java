@@ -7,13 +7,9 @@ import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
-/**
- * MongoDB document — stored in the "analysis_results" collection.
- * MongoDB's flexible schema is ideal here: AI model output can vary
- * between model versions without requiring a database migration.
- */
 @Document(collection = "analysis_results")
 @Getter @Setter
 @Builder
@@ -43,9 +39,36 @@ public class AnalysisResult {
 
     private String overallRisk;                 // LOW / MODERATE / HIGH
 
+    // Per-lesion QCA output from MobileUNetv3 + QCA pipeline
+    private List<LesionResult> lesions;
+    private Integer totalBranches;
+    private Boolean calibrated;
+
+    // MinIO object keys for derived images
+    private String angiogramImageKey;
+    private String segmentationMaskKey;
+    private String overlayImageKey;
+
     // Raw JSON from the model (kept for audit trail)
     private String rawModelOutput;
 
     @CreatedDate
     private LocalDateTime analyzedAt;
+
+    @Getter @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class LesionResult {
+        private Integer rank;
+        private Double dsPercent;
+        private String severity;
+        private Double mldPx;
+        private Double rvdPx;
+        private Double lengthPx;
+        private Double mldMm;
+        private Double rvdMm;
+        private Double lengthMm;
+        private List<Integer> narrowestPoint;
+    }
 }
