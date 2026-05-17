@@ -27,4 +27,5 @@ public class EcgAnalyzedEvent {
     private Integer qrsDuration;
     private Integer qtInterval;
     private String findings;
+    private String angiogramImageKey;
 }

@@ -48,6 +48,17 @@
       <artifactId>lombok</artifactId>
       <optional>true</optional>
     </dependency>
+    <!-- WebClient for calling the Python AI service -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webflux</artifactId>
+    </dependency>
+    <!-- MinIO Java SDK for fetching/storing angiogram images and masks -->
+    <dependency>
+      <groupId>io.minio</groupId>
+      <artifactId>minio</artifactId>
+      <version>8.5.9</version>
+    </dependency>
   </dependencies>
 
   <dependencyManagement>
