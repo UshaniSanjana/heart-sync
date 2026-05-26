@@ -97,7 +97,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-blue-300 text-xs">CO4353 Distributed Systems — Semester 8</p>
+        <p className="text-blue-300 text-xs"></p>
       </div>
 
       {/* ── Right form panel ── */}
