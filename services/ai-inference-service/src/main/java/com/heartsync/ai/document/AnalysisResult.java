@@ -33,6 +33,12 @@ public class AnalysisResult {
     @Builder.Default
     private String status = "COMPLETED";
 
+    // --- AI Model Prediction Results ---
+    private String prediction;              // Model class code: N, S, V, F, Q, M
+    private String predictionLabel;         // Human-readable: "Normal beat", "Myocardial Infarction", etc.
+    private Double confidence;              // Model confidence: 0.0 – 1.0
+    private Map<String, Double> allPredictions;  // All class probabilities
+
     // Coronary artery findings: artery name → status (Normal / Stenosis / Occlusion)
     private Map<String, String> coronaryFindings;
 
