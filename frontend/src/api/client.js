@@ -57,7 +57,7 @@ export const getEcgRecords = (patientId) =>
 export const getEcgRecord = (id) => api.get(`/ecg/${id}`)
 
 // --- AI Results ---
-export const getAiResult = (ecgId) => api.get(`/ai/results/${ecgId}`)
+export const getAiResult = (ecgId) => api.get(`/ai/results/ecg/${ecgId}`)
 
 export const analyzeAngiogram = (file) => {
   const form = new FormData()

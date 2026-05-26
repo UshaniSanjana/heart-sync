@@ -13,6 +13,7 @@ import lombok.NoArgsConstructor;
 public class EcgAnalyzedEvent {
     private String ecgRecordId;
     private String patientId;
+    private String fileKey;          // MinIO object key for ECG image download
     private Integer heartRate;
     private String rhythm;
     private Integer prInterval;

@@ -6,6 +6,7 @@ import {
   getEcgRecords,
   uploadEcg,
   analyzeAngiogram,
+  getAiResult,
   getReports,
   downloadReport,
 } from '../api/client.js'
@@ -63,6 +64,121 @@ function StatusBadge({ status }) {
     <span className={`badge ${map[status] ?? 'bg-slate-100 text-slate-600'}`}>
       {status}
     </span>
+  )
+}
+
+// ── AI Result sub-component ──────────────────────────────────────────────────
+
+function AiResultSection({ ecgRecordId }) {
+  const [aiResult, setAiResult] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!ecgRecordId) return
+    setLoading(true)
+    getAiResult(ecgRecordId)
+      .then(({ data }) => setAiResult(data))
+      .catch(() => setAiResult(null))
+      .finally(() => setLoading(false))
+  }, [ecgRecordId])
+
+  if (loading) {
+    return (
+      <Section title="AI ECG Classification">
+        <div className="flex justify-center py-6">
+          <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </Section>
+    )
+  }
+
+  if (!aiResult) {
+    return (
+      <Section title="AI ECG Classification">
+        <p className="text-sm text-slate-400 text-center py-4">
+          AI analysis not yet available. The model service may still be processing.
+        </p>
+      </Section>
+    )
+  }
+
+  return (
+    <Section title="AI ECG Classification">
+      <div className="space-y-4">
+        {/* Risk + Prediction */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Overall Risk</p>
+            <RiskBadge risk={aiResult.overallRisk} />
+          </div>
+          {aiResult.confidence != null && (
+            <div className="text-right">
+              <p className="text-xs text-slate-400 mb-1">Model Confidence</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {(aiResult.confidence * 100).toFixed(1)}%
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Prediction label */}
+        {aiResult.predictionLabel && (
+          <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
+            <p className="text-xs text-blue-500 mb-0.5">AI Prediction</p>
+            <p className="text-sm font-semibold text-blue-800">
+              {aiResult.predictionLabel}
+              {aiResult.prediction && (
+                <span className="ml-2 text-xs font-normal text-blue-500">({aiResult.prediction})</span>
+              )}
+            </p>
+          </div>
+        )}
+
+        {/* Coronary findings */}
+        {aiResult.coronaryFindings && Object.keys(aiResult.coronaryFindings).length > 0 && (
+          <div>
+            <p className="text-xs text-slate-400 mb-2">Analysis Details</p>
+            <div className="space-y-1">
+              {Object.entries(aiResult.coronaryFindings).map(([key, value]) => (
+                <div key={key} className="flex items-start gap-2 text-sm">
+                  <span className="text-slate-500 min-w-[140px]">{key}:</span>
+                  <span className="text-slate-700 font-medium">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* All predictions bar chart */}
+        {aiResult.allPredictions && Object.keys(aiResult.allPredictions).length > 0 && (
+          <div>
+            <p className="text-xs text-slate-400 mb-2">Class Probabilities</p>
+            <div className="space-y-1.5">
+              {Object.entries(aiResult.allPredictions)
+                .sort(([,a], [,b]) => b - a)
+                .map(([cls, prob]) => (
+                  <div key={cls} className="flex items-center gap-2 text-xs">
+                    <span className="w-6 text-slate-500 font-mono">{cls}</span>
+                    <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all"
+                        style={{ width: `${Math.max(prob * 100, 1)}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right text-slate-500">
+                      {(prob * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs text-slate-300 italic">
+          ⚕️ AI-generated — for clinical decision support only, not a substitute for professional diagnosis.
+        </p>
+      </div>
+    </Section>
   )
 }
 
@@ -213,7 +329,7 @@ export default function PatientPage() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".csv,.txt,.xml,.dcm"
+                  accept=".csv,.txt,.xml,.dcm,.png,.jpg,.jpeg,.bmp,.tiff,.tif"
                   className="hidden"
                   onChange={handleUpload}
                 />
@@ -280,36 +396,31 @@ export default function PatientPage() {
                     <StatusBadge status={selectedEcg.status} />
                   </div>
 
-                  {selectedEcg.analysisResult ? (
+                  {selectedEcg.heartRate || selectedEcg.rhythm ? (
                     <>
                       <div className="grid grid-cols-2 gap-4">
-                        <Field label="Heart rate" value={selectedEcg.analysisResult.heartRate ? `${selectedEcg.analysisResult.heartRate} bpm` : null} />
-                        <Field label="Rhythm" value={selectedEcg.analysisResult.rhythm} />
-                        <Field label="PR interval" value={selectedEcg.analysisResult.prInterval ? `${selectedEcg.analysisResult.prInterval} ms` : null} />
-                        <Field label="QRS duration" value={selectedEcg.analysisResult.qrsDuration ? `${selectedEcg.analysisResult.qrsDuration} ms` : null} />
-                        <Field label="QT interval" value={selectedEcg.analysisResult.qtInterval ? `${selectedEcg.analysisResult.qtInterval} ms` : null} />
-                        <Field label="QTc" value={selectedEcg.analysisResult.qtcInterval ? `${selectedEcg.analysisResult.qtcInterval} ms` : null} />
+                        <Field label="Heart rate" value={selectedEcg.heartRate ? `${selectedEcg.heartRate} bpm` : null} />
+                        <Field label="Rhythm" value={selectedEcg.rhythm} />
+                        <Field label="PR interval" value={selectedEcg.prInterval ? `${selectedEcg.prInterval} ms` : null} />
+                        <Field label="QRS duration" value={selectedEcg.qrsDuration ? `${selectedEcg.qrsDuration} ms` : null} />
+                        <Field label="QT interval" value={selectedEcg.qtInterval ? `${selectedEcg.qtInterval} ms` : null} />
                       </div>
-                      {selectedEcg.analysisResult.clinicalFindings?.length > 0 && (
+                      {selectedEcg.findings && (
                         <div>
-                          <p className="text-xs text-slate-400 mb-1">Clinical findings</p>
-                          <ul className="space-y-1">
-                            {selectedEcg.analysisResult.clinicalFindings.map((f, i) => (
-                              <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
-                                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-                                {f}
-                              </li>
-                            ))}
-                          </ul>
+                          <p className="text-xs text-slate-400 mb-1">Findings</p>
+                          <p className="text-sm text-slate-700">{selectedEcg.findings}</p>
                         </div>
                       )}
                     </>
                   ) : (
-                    <p className="text-sm text-slate-400 py-2">Analysis pending or not yet available.</p>
+                    <p className="text-sm text-slate-400 py-2">ECG analysis pending or not yet available.</p>
                   )}
                 </div>
               </Section>
             )}
+
+            {/* AI Classification Result (from AI Inference Service) */}
+            {selectedEcg && <AiResultSection ecgRecordId={selectedEcg.id} />}
           </div>
 
           {/* ── AI + Reports column ─────────────────────────────────────── */}
