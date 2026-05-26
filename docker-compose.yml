@@ -350,6 +350,34 @@ services:
       - heartsync-network
     profiles: ["all"]
 
+  # ===========================================================
+  #  ECG MODEL SERVICE — Python/FastAPI Sidecar
+  #
+  #  Wraps the Swin Transformer ECG image classifier.
+  #  The AI Inference Service calls this to classify ECG images.
+  #  Runs on CPU — no GPU required.
+  #  Model: gianlab/swin-tiny-patch4-window7-224-finetuned-ecg-classification
+  # ===========================================================
+  ecg-model-service:
+    build:
+      context: ./services/ecg-model-service
+      dockerfile: Dockerfile
+    container_name: ecg-model-service
+    restart: unless-stopped
+    ports:
+      - "${ECG_MODEL_SERVICE_PORT}:8086"
+    volumes:
+      - hf-model-cache:/app/.cache/huggingface
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    profiles: ["all"]
+
   ai-inference-service:
     build:
       context: ./services/ai-inference-service
@@ -368,12 +396,15 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      ECG_MODEL_SERVICE_URL: http://ecg-model-service:8086
     depends_on:
       mongodb:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
       eureka-server:
+        condition: service_healthy
+      ecg-model-service:
         condition: service_healthy
     networks:
       - heartsync-network
@@ -453,3 +484,4 @@ volumes:
   mongodb-data:
   rabbitmq-data:
   minio-data:
+  hf-model-cache:         # Caches the Swin model weights from HuggingFace
