@@ -1,10 +1,13 @@
 package com.heartsync.ai.controller;
 
 import com.heartsync.ai.document.AnalysisResult;
+import com.heartsync.ai.dto.AngiogramAnalysisResponse;
 import com.heartsync.ai.service.AiInferenceService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -14,6 +17,13 @@ import java.util.List;
 public class AiResultController {
 
     private final AiInferenceService aiInferenceService;
+
+    /** POST /api/ai/angiogram/analyze — direct synchronous segmentation + QCA */
+    @PostMapping(value = "/angiogram/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<AngiogramAnalysisResponse> analyzeAngiogram(
+            @RequestParam("file") MultipartFile file) throws Exception {
+        return ResponseEntity.ok(aiInferenceService.analyzeAngiogram(file.getBytes()));
+    }
 
     /** GET /api/ai/results/{id} */
     @GetMapping("/results/{id}")
