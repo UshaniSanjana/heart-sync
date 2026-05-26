@@ -350,6 +350,7 @@ services:
       - heartsync-network
     profiles: ["all"]
 
+
   # ===========================================================
   #  ECG MODEL SERVICE — Python/FastAPI Sidecar
   #
@@ -376,6 +377,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+
     profiles: ["all"]
 
   ai-inference-service:
@@ -396,7 +398,9 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+
       ECG_MODEL_SERVICE_URL: http://ecg-model-service:8086
+
     depends_on:
       mongodb:
         condition: service_healthy
@@ -404,8 +408,10 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
+
       ecg-model-service:
         condition: service_healthy
+
     networks:
       - heartsync-network
     profiles: ["all"]

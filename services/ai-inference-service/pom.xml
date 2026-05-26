@@ -48,6 +48,7 @@
       <artifactId>lombok</artifactId>
       <optional>true</optional>
     </dependency>
+
     <!-- MinIO client for downloading ECG images from object storage -->
     <dependency>
       <groupId>io.minio</groupId>
@@ -55,10 +56,19 @@
       <version>8.5.7</version>
     </dependency>
     <!-- WebClient for calling the Python ECG model sidecar -->
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webflux</artifactId>
     </dependency>
+
+    <!-- MinIO Java SDK for fetching/storing angiogram images and masks -->
+    <dependency>
+      <groupId>io.minio</groupId>
+      <artifactId>minio</artifactId>
+      <version>8.5.9</version>
+    </dependency>
+
   </dependencies>
 
   <dependencyManagement>
