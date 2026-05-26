@@ -10,7 +10,6 @@ import org.springframework.context.annotation.Configuration;
  * from the ecg-files bucket. The AI service needs to fetch
  * the uploaded image to send it to the Python model sidecar.
  */
- main
 @Configuration
 public class MinioConfig {
 
