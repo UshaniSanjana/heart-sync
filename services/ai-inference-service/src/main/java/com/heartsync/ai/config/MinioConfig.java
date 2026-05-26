@@ -5,6 +5,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Configures the MinIO client for downloading ECG images
+ * from the ecg-files bucket. The AI service needs to fetch
+ * the uploaded image to send it to the Python model sidecar.
+ */
+ main
 @Configuration
 public class MinioConfig {
 

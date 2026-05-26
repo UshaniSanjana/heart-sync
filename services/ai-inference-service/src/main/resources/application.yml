@@ -13,6 +13,17 @@ spring:
     username: ${RABBITMQ_USERNAME:heartsync}
     password: ${RABBITMQ_PASSWORD:heartsync_pass}
 
+# MinIO settings for downloading ECG images
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minio_admin}
+  secret-key: ${MINIO_SECRET_KEY:minio_pass}
+  bucket: ${MINIO_BUCKET:ecg-files}
+
+# Python ECG model sidecar service
+ecg-model:
+  service-url: ${ECG_MODEL_SERVICE_URL:http://localhost:8086}
+
 eureka:
   client:
     service-url:

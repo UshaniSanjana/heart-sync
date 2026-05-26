@@ -55,6 +55,7 @@ public class EcgService {
         EcgAnalyzedEvent event = EcgAnalyzedEvent.builder()
                 .ecgRecordId(record.getId())
                 .patientId(patientId)
+                .fileKey(record.getFileKey())
                 .heartRate(record.getHeartRate())
                 .rhythm(record.getRhythm())
                 .prInterval(record.getPrInterval())
