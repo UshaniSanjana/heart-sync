@@ -400,6 +400,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
 
       ECG_MODEL_SERVICE_URL: http://ecg-model-service:8086
+      AI_PYTHON_URL: http://ai-python-service:8000
 
     depends_on:
       mongodb:
@@ -408,12 +409,31 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
-
       ecg-model-service:
+        condition: service_healthy
+      ai-python-service:
         condition: service_healthy
 
     networks:
       - heartsync-network
+    profiles: ["all"]
+
+  ai-python-service:
+    build:
+      context: ./services/ai-python-service
+      dockerfile: Dockerfile
+    container_name: ai-python-service
+    restart: unless-stopped
+    ports:
+      - "${AI_PYTHON_PORT}:8000"
+    networks:
+      - heartsync-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     profiles: ["all"]
 
   reporting-service:

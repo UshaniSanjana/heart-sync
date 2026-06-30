@@ -55,8 +55,10 @@ public class AiInferenceService {
     private final AnalysisResultRepository repository;
     private final RabbitTemplate           rabbitTemplate;
     private final MinioClient              minioClient;
-
     private final ObjectMapper             objectMapper;
+    private final WebClient                aiPythonWebClient;
+
+    private final Random random = new Random();
 
 
     @Value("${minio.bucket:ecg-files}")
@@ -322,6 +324,25 @@ public class AiInferenceService {
         boolean hasStenosis = random.nextDouble() < stenosisChance;
         int stenosisPercent = hasStenosis ? 20 + random.nextInt(60) : random.nextInt(20);
 
+        String risk = hasAbnormalEcg ? "HIGH" : (hasStenosis ? "MODERATE" : "LOW");
+
+        return AnalysisResult.builder()
+                .ecgRecordId(event.getEcgRecordId())
+                .patientId(event.getPatientId())
+                .estimatedStenosisPercent(stenosisPercent)
+                .calciumScore("Within normal range")
+                .dominance("Right")
+                .overallRisk(risk)
+                .coronaryFindings(Map.of(
+                        "Left Main Artery (LMA)",         "Normal",
+                        "Left Anterior Descending (LAD)", hasStenosis ? "Stenosis" : "Normal",
+                        "Right Coronary Artery (RCA)",    "Normal",
+                        "Other branches",                 "Normal"
+                ))
+                .rawModelOutput("{\"model\":\"mock\",\"stenosisPercent\":" + stenosisPercent + "}")
+                .build();
+    }
+
     /**
      * Builds an AnalysisResult from the Python model sidecar's JSON response.
      *
@@ -394,13 +415,6 @@ public class AiInferenceService {
                 .predictionLabel(label)
                 .confidence(0.0)
                 .coronaryFindings(coronaryFindings)
-                .coronaryFindings(Map.of(
-                        "Left Main Artery (LMA)",         "Normal",
-                        "Left Anterior Descending (LAD)", hasStenosis ? "Stenosis" : "Normal",
-                        "Right Coronary Artery (RCA)",    "Normal",
-                        "Other branches",                 "Normal"
-                ))
-                .estimatedStenosisPercent(stenosisPercent)
                 .calciumScore("Within normal range")
                 .dominance("Right")
                 .overallRisk(risk)
