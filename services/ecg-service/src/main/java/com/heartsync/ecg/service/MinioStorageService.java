@@ -50,6 +50,17 @@ public class MinioStorageService {
         return key;
     }
 
+    public void deleteFile(String key) {
+        try {
+            minioClient.removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(key)
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to delete ECG file from MinIO", e);
+        }
+    }
+
     /**
      * Returns a pre-signed URL valid for 1 hour so the frontend
      * can download the file directly without going through the service.

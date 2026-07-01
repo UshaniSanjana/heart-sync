@@ -1,6 +1,7 @@
 package com.heartsync.ai.controller;
 
 import com.heartsync.ai.document.AnalysisResult;
+import com.heartsync.ai.document.AngiogramResult;
 import com.heartsync.ai.dto.AngiogramAnalysisResponse;
 import com.heartsync.ai.service.AiInferenceService;
 import lombok.RequiredArgsConstructor;
@@ -18,11 +19,20 @@ public class AiResultController {
 
     private final AiInferenceService aiInferenceService;
 
-    /** POST /api/ai/angiogram/analyze — direct synchronous segmentation + QCA */
+    /** POST /api/ai/angiogram/analyze — segmentation + QCA, saves result to MongoDB */
     @PostMapping(value = "/angiogram/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<AngiogramAnalysisResponse> analyzeAngiogram(
-            @RequestParam("file") MultipartFile file) throws Exception {
-        return ResponseEntity.ok(aiInferenceService.analyzeAngiogram(file.getBytes()));
+            @RequestParam("file")      MultipartFile file,
+            @RequestParam("patientId") String patientId) throws Exception {
+        return ResponseEntity.ok(aiInferenceService.analyzeAndSaveAngiogram(patientId, file.getBytes()));
+    }
+
+    /** GET /api/ai/angiogram/patient/{patientId} — latest saved angiogram result */
+    @GetMapping("/angiogram/patient/{patientId}")
+    public ResponseEntity<AngiogramResult> getAngiogramByPatient(@PathVariable String patientId) {
+        AngiogramResult result = aiInferenceService.getLatestAngiogramResult(patientId);
+        if (result == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(result);
     }
 
     /** GET /api/ai/results/{id} */

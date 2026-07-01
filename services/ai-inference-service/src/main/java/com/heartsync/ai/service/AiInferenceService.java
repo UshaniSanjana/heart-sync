@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heartsync.ai.config.RabbitMQConfig;
 import com.heartsync.ai.document.AnalysisResult;
+import com.heartsync.ai.document.AngiogramResult;
 import com.heartsync.ai.dto.AngiogramAnalysisResponse;
 import com.heartsync.ai.dto.QcaRequest;
 import com.heartsync.ai.dto.QcaResponse;
@@ -12,6 +13,7 @@ import com.heartsync.ai.dto.SegmentationResponse;
 import com.heartsync.ai.event.AiCompletedEvent;
 import com.heartsync.ai.event.EcgAnalyzedEvent;
 import com.heartsync.ai.repository.AnalysisResultRepository;
+import com.heartsync.ai.repository.AngiogramResultRepository;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 
@@ -52,11 +54,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AiInferenceService {
 
-    private final AnalysisResultRepository repository;
-    private final RabbitTemplate           rabbitTemplate;
-    private final MinioClient              minioClient;
-    private final ObjectMapper             objectMapper;
-    private final WebClient                aiPythonWebClient;
+    private final AnalysisResultRepository    repository;
+    private final AngiogramResultRepository   angiogramResultRepository;
+    private final RabbitTemplate              rabbitTemplate;
+    private final MinioClient                 minioClient;
+    private final ObjectMapper                objectMapper;
+    private final WebClient                   aiPythonWebClient;
 
     private final Random random = new Random();
 
@@ -242,6 +245,49 @@ public class AiInferenceService {
                 .segmentationTimeMs(segMs)
                 .qcaTimeMs(qcaMs)
                 .build();
+    }
+
+    public AngiogramAnalysisResponse analyzeAndSaveAngiogram(String patientId, byte[] imageBytes) {
+        AngiogramAnalysisResponse response = analyzeAngiogram(imageBytes);
+
+        int maxStenosis = 0;
+        List<AngiogramResult.LesionResult> lesionDocs = null;
+        if (response.getLesions() != null) {
+            lesionDocs = response.getLesions().stream()
+                    .map(l -> AngiogramResult.LesionResult.builder()
+                            .rank(l.getRank())
+                            .dsPercent(l.getDsPercent())
+                            .severity(l.getSeverity())
+                            .mldPx(l.getMldPx())
+                            .rvdPx(l.getRvdPx())
+                            .lengthPx(l.getLengthPx())
+                            .mldMm(l.getMldMm())
+                            .rvdMm(l.getRvdMm())
+                            .lengthMm(l.getLengthMm())
+                            .build())
+                    .collect(Collectors.toList());
+            maxStenosis = response.getLesions().stream()
+                    .mapToInt(l -> (int) Math.round(l.getDsPercent()))
+                    .max().orElse(0);
+        }
+
+        AngiogramResult saved = AngiogramResult.builder()
+                .patientId(patientId)
+                .overallRisk(response.getOverallRisk())
+                .confidence(response.getConfidence())
+                .totalBranches(response.getTotalBranches())
+                .calibrated(response.isCalibrated())
+                .estimatedStenosisPercent(maxStenosis)
+                .segmentationTimeMs(response.getSegmentationTimeMs())
+                .qcaTimeMs(response.getQcaTimeMs())
+                .lesions(lesionDocs)
+                .build();
+        angiogramResultRepository.save(saved);
+        return response;
+    }
+
+    public AngiogramResult getLatestAngiogramResult(String patientId) {
+        return angiogramResultRepository.findTopByPatientIdOrderByIdDesc(patientId).orElse(null);
     }
 
     private AnalysisResult runRealSegmentation(EcgAnalyzedEvent event) {
