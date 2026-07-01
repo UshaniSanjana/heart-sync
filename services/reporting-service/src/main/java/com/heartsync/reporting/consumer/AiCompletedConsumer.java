@@ -8,7 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
-@Component
+// Auto-generation disabled — reports are now generated manually via POST /api/reports/generate
+// @Component
 @RequiredArgsConstructor
 @Slf4j
 public class AiCompletedConsumer {

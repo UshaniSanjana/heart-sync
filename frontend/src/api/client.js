@@ -56,20 +56,31 @@ export const getEcgRecords = (patientId) =>
 
 export const getEcgRecord = (id) => api.get(`/ecg/${id}`)
 
+export const deleteEcg = (id) => api.delete(`/ecg/${id}`)
+
 // --- AI Results ---
 export const getAiResult = (ecgId) => api.get(`/ai/results/ecg/${ecgId}`)
 
-export const analyzeAngiogram = (file) => {
+export const analyzeAngiogram = (patientId, file) => {
   const form = new FormData()
+  form.append('patientId', patientId)
   form.append('file', file)
   return api.post('/ai/angiogram/analyze', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
 
+export const generateReport = (patientId, ecgRecordId) => {
+  const params = new URLSearchParams({ patientId })
+  if (ecgRecordId) params.append('ecgRecordId', ecgRecordId)
+  return api.post(`/reports/generate?${params.toString()}`)
+}
+
 // --- Reports ---
 export const getReports = (patientId) =>
   api.get(`/reports/patient/${patientId}`)
+
+export const deleteReport = (id) => api.delete(`/reports/${id}`)
 
 export const downloadReport = async (reportId, fileName) => {
   const response = await api.get(`/reports/${reportId}/download`, {

@@ -43,9 +43,14 @@ public class PdfGenerationService {
             addHeader(doc, data);
             addPatientInfo(doc, data);
             addClinicalSummary(doc, data);
-            addEcgResults(doc, data);
-            addAiResults(doc, data);
-            addFusionInsight(doc, data);
+
+            boolean hasEcg   = data.heartRate() != null;
+            boolean hasAngio = data.angioRisk() != null;
+
+            if (hasEcg)   addEcgSection(doc, data);
+            if (hasAngio) addAngiogramSection(doc, data);
+            if (hasEcg && hasAngio) addFusionInsight(doc, data);
+
             addRiskAssessment(doc, data);
             addFinalImpression(doc, data);
             addFooter(doc, data);
@@ -102,45 +107,88 @@ public class PdfGenerationService {
         doc.add(p);
     }
 
-    private void addEcgResults(Document doc, ReportData data) throws DocumentException {
-        PdfPTable columns = new PdfPTable(2);
-        columns.setWidthPercentage(100);
-        columns.setSpacingBefore(4);
-
-        // Left: ECG
-        PdfPCell ecgCell = new PdfPCell();
-        ecgCell.setBorderColor(TEAL);
-        ecgCell.setPadding(8);
-        ecgCell.addElement(new Paragraph("ECG Analysis Results", HEADER_FONT));
-        ecgCell.addElement(checkRow("Heart Rate:", data.heartRate() + " bpm"));
-        ecgCell.addElement(checkRow("Rhythm:",     data.rhythm()));
-        ecgCell.addElement(checkRow("PR Interval:", data.prInterval() + " ms"));
-        ecgCell.addElement(checkRow("QRS Duration:", data.qrsDuration() + " ms"));
-        ecgCell.addElement(checkRow("QT Interval:", data.qtInterval() + " ms"));
-        columns.addCell(ecgCell);
-
-        // Right: AI
-        PdfPCell aiCell = new PdfPCell();
-        aiCell.setBorderColor(TEAL);
-        aiCell.setPadding(8);
-        aiCell.addElement(new Paragraph("AI Angiogram Analysis (Segmentation-Based)", HEADER_FONT));
-        aiCell.addElement(new Paragraph("Coronary Artery Findings:", LABEL_FONT));
-        for (Map.Entry<String, String> entry : data.coronaryFindings().entrySet()) {
-            aiCell.addElement(checkRow(entry.getKey() + ":", entry.getValue()));
+    private void addEcgSection(Document doc, ReportData data) throws DocumentException {
+        PdfPTable box = new PdfPTable(1);
+        box.setWidthPercentage(100);
+        box.setSpacingBefore(4);
+        PdfPCell cell = new PdfPCell();
+        cell.setBorderColor(TEAL);
+        cell.setPadding(8);
+        cell.addElement(new Paragraph("ECG Analysis Results", HEADER_FONT));
+        cell.addElement(checkRow("Heart Rate:",   data.heartRate()   + " bpm"));
+        cell.addElement(checkRow("Rhythm:",       data.rhythm()      != null ? data.rhythm()      : "—"));
+        cell.addElement(checkRow("PR Interval:",  data.prInterval()  + " ms"));
+        cell.addElement(checkRow("QRS Duration:", data.qrsDuration() + " ms"));
+        cell.addElement(checkRow("QT Interval:",  data.qtInterval()  + " ms"));
+        if (data.ecgFindings() != null) {
+            cell.addElement(Chunk.NEWLINE);
+            cell.addElement(new Paragraph("Findings: " + data.ecgFindings(), BODY_FONT));
         }
-        aiCell.addElement(Chunk.NEWLINE);
-        aiCell.addElement(new Paragraph("AI-Derived Metrics:", LABEL_FONT));
-        aiCell.addElement(checkRow("Estimated Stenosis:", "< " + data.stenosisPercent() + "%"));
-        aiCell.addElement(checkRow("Calcium Score:", data.calciumScore()));
-        aiCell.addElement(checkRow("Dominance:", data.dominance()));
-        columns.addCell(aiCell);
-
-        doc.add(columns);
+        if (data.coronaryFindings() != null && !data.coronaryFindings().isEmpty()) {
+            cell.addElement(Chunk.NEWLINE);
+            cell.addElement(new Paragraph("AI ECG Classification:", LABEL_FONT));
+            for (Map.Entry<String, String> e : data.coronaryFindings().entrySet())
+                cell.addElement(checkRow(e.getKey() + ":", e.getValue()));
+            if (data.calciumScore() != null)
+                cell.addElement(checkRow("Calcium Score:", data.calciumScore()));
+            if (data.dominance() != null)
+                cell.addElement(checkRow("Dominance:", data.dominance()));
+        }
+        box.addCell(cell);
+        doc.add(box);
         doc.add(Chunk.NEWLINE);
     }
 
-    private void addAiResults(Document doc, ReportData data) {
-        // Already combined in addEcgResults
+    private void addAngiogramSection(Document doc, ReportData data) throws DocumentException {
+        PdfPTable box = new PdfPTable(1);
+        box.setWidthPercentage(100);
+        box.setSpacingBefore(4);
+        PdfPCell cell = new PdfPCell();
+        cell.setBorderColor(TEAL);
+        cell.setPadding(8);
+        cell.addElement(new Paragraph("AI Angiogram Analysis (Segmentation-Based)", HEADER_FONT));
+        cell.addElement(checkRow("Overall Risk:", data.angioRisk()));
+        if (data.angioConfidence() != null)
+            cell.addElement(checkRow("Model Confidence:", String.format("%.1f%%", data.angioConfidence() * 100)));
+        if (data.angioTotalBranches() != null)
+            cell.addElement(checkRow("Branches Detected:", String.valueOf(data.angioTotalBranches())));
+        if (data.angioStenosisPercent() != null)
+            cell.addElement(checkRow("Max Stenosis (DS%):", data.angioStenosisPercent() + "%"));
+
+        if (data.angioLesions() != null && !data.angioLesions().isEmpty()) {
+            cell.addElement(Chunk.NEWLINE);
+            cell.addElement(new Paragraph("Detected Lesions (" + data.angioLesions().size() + "):", LABEL_FONT));
+
+            PdfPTable lesionTable = new PdfPTable(5);
+            lesionTable.setWidthPercentage(100);
+            lesionTable.setWidths(new float[]{0.5f, 1.5f, 1f, 1f, 1f});
+            lesionTable.setSpacingBefore(4);
+            for (String h : new String[]{"#", "Severity", "DS%", "MLD (px)", "Length (px)"}) {
+                PdfPCell hc = new PdfPCell(new Paragraph(h, LABEL_FONT));
+                hc.setBackgroundColor(LIGHT_GRAY);
+                hc.setPadding(3);
+                lesionTable.addCell(hc);
+            }
+            for (ReportingService.LesionData l : data.angioLesions()) {
+                for (String v : new String[]{
+                        String.valueOf(l.rank()),
+                        l.severity(),
+                        String.format("%.1f%%", l.dsPercent()),
+                        String.format("%.1f", l.mldPx()),
+                        String.format("%.1f", l.lengthPx())}) {
+                    PdfPCell vc = new PdfPCell(new Paragraph(v, BODY_FONT));
+                    vc.setPadding(3);
+                    lesionTable.addCell(vc);
+                }
+            }
+            cell.addElement(lesionTable);
+        } else {
+            cell.addElement(checkRow("Lesions:", "No significant lesions detected"));
+        }
+
+        box.addCell(cell);
+        doc.add(box);
+        doc.add(Chunk.NEWLINE);
     }
 
     private void addFusionInsight(Document doc, ReportData data) throws DocumentException {
@@ -230,27 +278,39 @@ public class PdfGenerationService {
         return p;
     }
 
-    // DTO carrying all report data into the generator
+    // DTO carrying all report data into the generator.
+    // ECG fields are null when no ECG was uploaded.
+    // Angio fields are null when no angiogram was uploaded.
     public record ReportData(
-            String reportId,
-            String patientId,
-            String patientName,
-            String dateOfBirth,
-            String gender,
-            String visitDate,
-            String referringPhysician,
-            String clinicalSummary,
-            int    heartRate,
-            String rhythm,
-            int    prInterval,
-            int    qrsDuration,
-            int    qtInterval,
+            String  reportId,
+            String  patientId,
+            String  patientName,
+            String  dateOfBirth,
+            String  gender,
+            String  visitDate,
+            String  referringPhysician,
+            String  clinicalSummary,
+            // ECG section (null = not available)
+            Integer heartRate,
+            String  rhythm,
+            Integer prInterval,
+            Integer qrsDuration,
+            Integer qtInterval,
+            String  ecgFindings,
+            // AI ECG classification (null = not available)
             Map<String, String> coronaryFindings,
-            int    stenosisPercent,
-            String calciumScore,
-            String dominance,
-            String fusionInsight,
-            String overallRisk,
-            String finalImpression
+            Integer stenosisPercent,
+            String  calciumScore,
+            String  dominance,
+            // Angiogram section (null = not available)
+            String  angioRisk,
+            Double  angioConfidence,
+            Integer angioTotalBranches,
+            Integer angioStenosisPercent,
+            java.util.List<ReportingService.LesionData> angioLesions,
+            // Summary
+            String  fusionInsight,
+            String  overallRisk,
+            String  finalImpression
     ) {}
 }

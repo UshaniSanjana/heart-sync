@@ -41,6 +41,17 @@ public class MinioStorageService {
         return key;
     }
 
+    public void deletePdf(String key) {
+        try {
+            minioClient.removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(key)
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to delete PDF from MinIO", e);
+        }
+    }
+
     public byte[] downloadPdf(String key) {
         try {
             return minioClient.getObject(GetObjectArgs.builder()

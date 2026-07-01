@@ -79,6 +79,16 @@ public class EcgService {
         return ecgRecordRepository.findByPatientIdOrderByCreatedAtDesc(patientId);
     }
 
+    public void delete(String id) {
+        EcgRecord record = getById(id);
+        if (record.getFileKey() != null) {
+            try { minioStorageService.deleteFile(record.getFileKey()); }
+            catch (Exception e) { log.warn("MinIO delete failed for ECG {}: {}", id, e.getMessage()); }
+        }
+        ecgRecordRepository.deleteById(id);
+        log.info("Deleted ECG record {}", id);
+    }
+
     /**
      * Generates realistic ECG values.
      * In production this calls a real ML inference endpoint.

@@ -43,4 +43,11 @@ public class EcgController {
     public ResponseEntity<List<EcgRecord>> getByPatient(@PathVariable String patientId) {
         return ResponseEntity.ok(ecgService.getByPatient(patientId));
     }
+
+    /** DELETE /api/ecg/{id} */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        ecgService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
 }
