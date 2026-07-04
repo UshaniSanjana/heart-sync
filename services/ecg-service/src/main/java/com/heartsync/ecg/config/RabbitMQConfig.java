@@ -13,9 +13,11 @@ public class RabbitMQConfig {
     // Exchange name shared across all services
     public static final String EXCHANGE      = "heartsync.exchange";
 
-    // This service publishes to this routing key
-    public static final String ECG_ROUTING_KEY = "ecg.analyzed";
-    public static final String ECG_QUEUE       = "ecg.analyzed.queue";
+    public static final String AI_ANALYSIS_ROUTING_KEY = "ai.analysis.requested";
+    public static final String AI_ANALYSIS_QUEUE       = "ai.analysis.requested.queue";
+    public static final String AI_ANALYSIS_DLQ         = "ai.analysis.requested.dlq";
+    public static final String DEAD_LETTER_EXCHANGE    = "heartsync.dlx";
+    public static final String DEAD_LETTER_ROUTING_KEY = "ai.analysis.requested.dead";
 
     /**
      * Topic exchange: routes messages by routing key pattern.
@@ -32,15 +34,35 @@ public class RabbitMQConfig {
      * Declaring it here too ensures it exists even if AI service hasn't started.
      */
     @Bean
-    public Queue ecgAnalyzedQueue() {
-        return QueueBuilder.durable(ECG_QUEUE).build();
+    public Queue aiAnalysisRequestedQueue() {
+        return QueueBuilder.durable(AI_ANALYSIS_QUEUE)
+                .withArgument("x-dead-letter-exchange", DEAD_LETTER_EXCHANGE)
+                .withArgument("x-dead-letter-routing-key", DEAD_LETTER_ROUTING_KEY)
+                .build();
     }
 
     @Bean
-    public Binding ecgAnalyzedBinding(Queue ecgAnalyzedQueue, TopicExchange heartSyncExchange) {
-        return BindingBuilder.bind(ecgAnalyzedQueue)
+    public Binding aiAnalysisRequestedBinding(Queue aiAnalysisRequestedQueue, TopicExchange heartSyncExchange) {
+        return BindingBuilder.bind(aiAnalysisRequestedQueue)
                 .to(heartSyncExchange)
-                .with(ECG_ROUTING_KEY);
+                .with(AI_ANALYSIS_ROUTING_KEY);
+    }
+
+    @Bean
+    public DirectExchange deadLetterExchange() {
+        return new DirectExchange(DEAD_LETTER_EXCHANGE, true, false);
+    }
+
+    @Bean
+    public Queue aiAnalysisRequestedDlq() {
+        return QueueBuilder.durable(AI_ANALYSIS_DLQ).build();
+    }
+
+    @Bean
+    public Binding aiAnalysisRequestedDlqBinding(Queue aiAnalysisRequestedDlq, DirectExchange deadLetterExchange) {
+        return BindingBuilder.bind(aiAnalysisRequestedDlq)
+                .to(deadLetterExchange)
+                .with(DEAD_LETTER_ROUTING_KEY);
     }
 
     /**

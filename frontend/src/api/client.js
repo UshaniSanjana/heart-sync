@@ -41,6 +41,8 @@ export const getPatient = (id) => api.get(`/patients/${id}`)
 
 export const createPatient = (data) => api.post('/patients', data)
 
+export const deletePatient = (id) => api.delete(`/patients/${id}`)
+
 // --- ECG ---
 export const uploadEcg = (patientId, file) => {
   const form = new FormData()
@@ -69,6 +71,9 @@ export const analyzeAngiogram = (patientId, file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+
+export const getAngiogramResult = (patientId) =>
+  api.get(`/ai/angiogram/patient/${patientId}`)
 
 export const generateReport = (patientId, ecgRecordId) => {
   const params = new URLSearchParams({ patientId })

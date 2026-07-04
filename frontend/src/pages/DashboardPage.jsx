@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar.jsx'
 import AddPatientModal from '../components/AddPatientModal.jsx'
-import { getPatients, getEcgRecords, getReports } from '../api/client.js'
+import { getPatients, getEcgRecords, getReports, deletePatient } from '../api/client.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -87,6 +87,8 @@ export default function DashboardPage() {
   const [search,    setSearch]    = useState('')
   const [showModal, setShowModal] = useState(false)
   const [stats,     setStats]     = useState({ ecg: null, reports: null })
+  const [confirmDeletePatient, setConfirmDeletePatient] = useState(null)
+  const [deletingPatientId, setDeletingPatientId] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => { fetchPatients() }, [])
@@ -113,6 +115,20 @@ export default function DashboardPage() {
     })
   }
 
+  const handleDeletePatient = async (patientId) => {
+    setDeletingPatientId(patientId)
+    try {
+      await deletePatient(patientId)
+      const updated = patients.filter((p) => p.id !== patientId)
+      setPatients(updated)
+      fetchStats(updated)
+    } catch { /* row stays if delete fails */ }
+    finally {
+      setDeletingPatientId(null)
+      setConfirmDeletePatient(null)
+    }
+  }
+
   const statValues = {
     patients: patients.length,
     ecg:      stats.ecg,
@@ -122,10 +138,11 @@ export default function DashboardPage() {
 
   const filtered = patients.filter((p) => {
     const q = search.toLowerCase()
+    const contact = p.phone ?? p.contactNumber ?? ''
     return (
       p.firstName?.toLowerCase().includes(q) ||
       p.lastName?.toLowerCase().includes(q)  ||
-      p.contactNumber?.includes(q)
+      contact.toLowerCase().includes(q)
     )
   })
 
@@ -213,18 +230,21 @@ export default function DashboardPage() {
                     <th className="text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Date of Birth</th>
                     <th className="text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-4 py-3 hidden md:table-cell">Gender</th>
                     <th className="text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-4 py-3 hidden lg:table-cell">Contact</th>
-                    <th className="px-4 py-3 w-10" />
+                    <th className="px-4 py-3 w-32" />
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((p) => (
-                    <tr
-                      key={p.id}
-                      onClick={() => navigate(`/patients/${p.id}`)}
-                      className="border-b border-slate-100/50 cursor-pointer transition-colors duration-100 group"
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248,250,252,0.7)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
+                  {filtered.map((p) => {
+                    const isConfirmingDelete = confirmDeletePatient === p.id
+                    const isDeleting = deletingPatientId === p.id
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => navigate(`/patients/${p.id}`)}
+                        className="border-b border-slate-100/50 cursor-pointer transition-colors duration-100 group"
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248,250,252,0.7)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-sm ring-2 ring-white/80">
@@ -246,14 +266,56 @@ export default function DashboardPage() {
                           {p.gender === 'FEMALE' ? 'Female' : p.gender === 'MALE' ? 'Male' : p.gender}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-slate-500 hidden lg:table-cell">{p.contactNumber || '—'}</td>
-                      <td className="px-4 py-3.5 text-right">
-                        <svg className="w-4 h-4 text-slate-300 group-hover:text-blue-400 transition-colors ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                        </svg>
-                      </td>
-                    </tr>
-                  ))}
+                      <td className="px-4 py-3.5 text-sm text-slate-500 hidden lg:table-cell">{p.phone || p.contactNumber || '—'}</td>
+                        <td className="px-4 py-3.5 text-right">
+                          {isConfirmingDelete ? (
+                            <div
+                              className="flex items-center justify-end gap-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                onClick={() => setConfirmDeletePatient(null)}
+                                className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleDeletePatient(p.id)}
+                                disabled={isDeleting}
+                                className="text-xs px-2.5 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                {isDeleting ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : null}
+                                Delete
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmDeletePatient(p.id)
+                                }}
+                                disabled={isDeleting}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                title="Delete patient"
+                              >
+                                {isDeleting ? (
+                                  <span className="w-3.5 h-3.5 border-2 border-red-200 border-t-red-500 rounded-full animate-spin" />
+                                ) : (
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                  </svg>
+                                )}
+                              </button>
+                              <svg className="w-4 h-4 text-slate-300 group-hover:text-blue-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                              </svg>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

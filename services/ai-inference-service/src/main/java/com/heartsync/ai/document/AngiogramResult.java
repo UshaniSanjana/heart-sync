@@ -19,6 +19,9 @@ public class AngiogramResult {
     @Indexed
     private String patientId;
 
+    private String angiogramImageKey;
+    private String overlayBase64;
+    private String maskBase64;
     private String  overallRisk;
     private Double  confidence;
     private Integer totalBranches;
