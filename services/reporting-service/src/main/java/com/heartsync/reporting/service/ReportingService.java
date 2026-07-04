@@ -62,14 +62,22 @@ public class ReportingService {
             String clinicalSummary = "Patient was evaluated for cardiovascular symptoms. " +
                     "Multimodal analysis combining ECG and coronary angiography findings was performed.";
 
+            PatientData patient = fetchPatient(event.getPatientId());
+            String patientName = patientName(event.getPatientId(), patient);
+            String dob = patient != null && patient.dateOfBirth() != null
+                    ? patient.dateOfBirth() : "N/A";
+            String gender = patient != null && patient.gender() != null
+                    ? patient.gender() : "N/A";
+            String referringPhysician = resolveReferringPhysician(patient);
+
             // Generate PDF
             PdfGenerationService.ReportData reportData = new PdfGenerationService.ReportData(
                     report.getId(),
                     event.getPatientId(),
-                    "Patient " + event.getPatientId().substring(0, 8),
-                    "N/A", "N/A",
+                    patientName,
+                    dob, gender,
                     LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
-                    "Dr. HeartSync",
+                    referringPhysician,
                     clinicalSummary,
                     ecg.heartRate(),
                     ecg.rhythm(),
@@ -157,23 +165,14 @@ public class ReportingService {
             String finalImpression = buildFinalImpression(overallRisk);
             String clinicalSummary = buildClinicalSummary(ecg != null, angio != null);
 
-            PatientData patient = null;
-            try {
-                patient = restTemplate.getForObject(
-                        "http://patient-service/api/patients/" + patientId, PatientData.class);
-            } catch (Exception e) {
-                log.warn("Could not fetch patient data for {}: {}", patientId, e.getMessage());
-            }
+            PatientData patient = fetchPatient(patientId);
 
-            String patientName = patient != null
-                    ? (patient.firstName() + " " + patient.lastName()).trim()
-                    : "Patient " + patientId.substring(0, 8);
+            String patientName = patientName(patientId, patient);
             String dob = patient != null && patient.dateOfBirth() != null
                     ? patient.dateOfBirth() : "N/A";
             String gender = patient != null && patient.gender() != null
                     ? patient.gender() : "N/A";
-            String referringPhysician = patient != null && patient.referringPhysician() != null
-                    ? patient.referringPhysician() : "Dr. HeartSync";
+            String referringPhysician = resolveReferringPhysician(patient);
 
             PdfGenerationService.ReportData reportData = new PdfGenerationService.ReportData(
                     report.getId(),
@@ -253,6 +252,48 @@ public class ReportingService {
         return "Coronary angiography evaluation. ECG data not included in this report.";
     }
 
+    private PatientData fetchPatient(String patientId) {
+        try {
+            return restTemplate.getForObject(
+                    "http://patient-service/api/patients/" + patientId, PatientData.class);
+        } catch (Exception e) {
+            log.warn("Could not fetch patient data for {}: {}", patientId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String patientName(String patientId, PatientData patient) {
+        if (patient == null) return "Patient " + patientId.substring(0, 8);
+        String name = ((patient.firstName() != null ? patient.firstName() : "") + " " +
+                (patient.lastName() != null ? patient.lastName() : "")).trim();
+        return !name.isBlank() ? name : "Patient " + patientId.substring(0, 8);
+    }
+
+    private String resolveReferringPhysician(PatientData patient) {
+        if (patient == null) return "N/A";
+        if (patient.referringPhysician() != null && !patient.referringPhysician().isBlank()) {
+            return patient.referringPhysician();
+        }
+        if (patient.registeredBy() != null && !patient.registeredBy().isBlank()) {
+            try {
+                UserData user = restTemplate.getForObject(
+                        "http://iam-service/api/internal/users/" + patient.registeredBy(), UserData.class);
+                if (user != null && user.fullName() != null && !user.fullName().isBlank()) {
+                    return formatDoctorName(user.fullName(), user.role());
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch registering doctor {}: {}", patient.registeredBy(), e.getMessage());
+            }
+        }
+        return "N/A";
+    }
+
+    private String formatDoctorName(String fullName, String role) {
+        String name = fullName.trim();
+        if (name.toLowerCase().startsWith("dr.")) return name;
+        return "DOCTOR".equals(role) ? "Dr. " + name : name;
+    }
+
     record LesionData(int rank, double dsPercent, String severity,
                       double mldPx, double rvdPx, double lengthPx) {}
 
@@ -261,7 +302,10 @@ public class ReportingService {
                          Integer estimatedStenosisPercent, java.util.List<LesionData> lesions) {}
 
     record PatientData(String id, String firstName, String lastName,
-                       String dateOfBirth, String gender, String referringPhysician) {}
+                       String dateOfBirth, String gender, String referringPhysician,
+                       String registeredBy) {}
+
+    record UserData(String id, String email, String fullName, String role) {}
 
     public ClinicalReport getById(String id) {
         return reportRepository.findById(id)

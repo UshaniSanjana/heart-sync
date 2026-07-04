@@ -52,4 +52,5 @@ public class AuthController {
                 "email",  email
         ));
     }
+
 }

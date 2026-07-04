@@ -27,9 +27,10 @@ public class EcgController {
     public ResponseEntity<EcgRecord> upload(
             @RequestParam("file")      MultipartFile file,
             @RequestParam("patientId") String patientId,
-            @RequestHeader("X-User-Id") String userId) {
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ecgService.upload(patientId, userId, file));
+                .body(ecgService.upload(patientId, userId, file, traceId));
     }
 
     /** GET /api/ecg/{id} */

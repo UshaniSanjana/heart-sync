@@ -15,13 +15,13 @@ export default function LoginPage() {
   const [tab, setTab]         = useState('login')
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
-  const [success, setSuccess] = useState('')
+  const [popup, setPopup]     = useState('')
   const [loginForm, setLoginForm]       = useState(LOGIN_INIT)
   const [registerForm, setRegisterForm] = useState(REGISTER_INIT)
 
   const changeLogin    = (e) => setLoginForm((f)    => ({ ...f, [e.target.name]: e.target.value }))
   const changeRegister = (e) => setRegisterForm((f) => ({ ...f, [e.target.name]: e.target.value }))
-  const switchTab = (t) => { setTab(t); setError(''); setSuccess('') }
+  const switchTab = (t) => { setTab(t); setError('') }
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -39,20 +39,46 @@ export default function LoginPage() {
     if (registerForm.password !== registerForm.confirmPassword) {
       setError('Passwords do not match.'); return
     }
+    if (registerForm.password.length < 8) {
+      setError('Password must be at least 8 characters.'); return
+    }
     setLoading(true); setError('')
     try {
       await apiRegister(registerForm.name, registerForm.email, registerForm.password, registerForm.role)
-      setSuccess('Account created! You can now sign in.')
+      const message = 'Account created successfully. You can now sign in.'
+      setPopup(message)
       setRegisterForm(REGISTER_INIT)
       switchTab('login')
       setLoginForm((f) => ({ ...f, email: registerForm.email }))
+      window.setTimeout(() => setPopup(''), 4000)
     } catch (err) {
-      setError(err.response?.data?.message ?? 'Registration failed. Try a different email.')
+      setError(getErrorMessage(err, 'Registration failed. Try a different email.'))
     } finally { setLoading(false) }
   }
 
   return (
     <div className="min-h-screen flex relative overflow-hidden">
+      {popup && (
+        <div className="fixed top-5 right-5 z-50 max-w-sm rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-xl shadow-emerald-100/70 flex items-start gap-2.5">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="flex-1">
+            <p className="font-semibold">Registration complete</p>
+            <p className="mt-0.5">{popup}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPopup('')}
+            className="ml-2 text-emerald-500 hover:text-emerald-700 transition-colors"
+            aria-label="Dismiss notification"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Near-white gradient background — same as Dashboard / PatientPage */}
       <div
@@ -152,15 +178,6 @@ export default function LoginPage() {
                 {error}
               </div>
             )}
-            {success && (
-              <div className="mb-5 flex items-start gap-2.5 px-4 py-3 rounded-xl bg-emerald-50/80 border border-emerald-200/70 text-sm text-emerald-700">
-                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {success}
-              </div>
-            )}
-
             {/* Login form */}
             {tab === 'login' && (
               <>
@@ -215,8 +232,8 @@ export default function LoginPage() {
                   </FormField>
                   <div className="grid grid-cols-2 gap-3">
                     <FormField label="Password">
-                      <FormInput name="password" type="password" autoComplete="new-password" required minLength={6}
-                        value={registerForm.password} onChange={changeRegister} placeholder="Min. 6 chars" />
+                      <FormInput name="password" type="password" autoComplete="new-password" required minLength={8}
+                        value={registerForm.password} onChange={changeRegister} placeholder="Min. 8 chars" />
                     </FormField>
                     <FormField label="Confirm">
                       <FormInput name="confirmPassword" type="password" autoComplete="new-password" required
@@ -240,6 +257,16 @@ export default function LoginPage() {
       </div>
     </div>
   )
+}
+
+function getErrorMessage(err, fallback) {
+  const data = err.response?.data
+  if (typeof data === 'string') return data
+  if (data?.message) return data.message
+  if (data?.errors && typeof data.errors === 'object') {
+    return Object.values(data.errors).filter(Boolean).join(' ')
+  }
+  return fallback
 }
 
 function FormField({ label, children }) {

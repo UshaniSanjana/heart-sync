@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar.jsx'
 import {
   getPatient, getEcgRecords, uploadEcg, analyzeAngiogram,
-  getAiResult, getReports, downloadReport, generateReport,
+  getAiResult, getAngiogramResult, getReports, downloadReport, generateReport,
   deleteEcg, deleteReport,
 } from '../api/client.js'
 
@@ -20,6 +20,33 @@ function fmtTime(str) {
   if (!str) return ''
   try { return new Date(str).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) }
   catch { return '' }
+}
+
+function fmtDateTimeForFile(str) {
+  if (!str) return 'undated'
+  try {
+    const d = new Date(str)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  } catch {
+    return str.slice(0, 16).replace(/[^a-zA-Z0-9]/g, '-')
+  }
+}
+
+function getPatientName(patient, fallback) {
+  const name = `${patient?.firstName ?? ''} ${patient?.lastName ?? ''}`.trim()
+  return name || fallback
+}
+
+function slugify(value) {
+  return String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function reportNumber(index, total) {
+  return String(total - index).padStart(2, '0')
 }
 
 // Doctor-friendly status labels
@@ -236,6 +263,7 @@ export default function PatientPage() {
   const [uploadError,    setUploadError]    = useState('')
   const [angioResult,    setAngioResult]    = useState(null)
   const [analyzingAngio, setAnalyzingAngio] = useState(false)
+  const [angioQueued,    setAngioQueued]    = useState(false)
   const [angioError,     setAngioError]     = useState('')
   const [generateError,  setGenerateError]  = useState('')
 
@@ -253,6 +281,7 @@ export default function PatientPage() {
         if (data.length > 0) setSelectedEcg(data[0])
       }).finally(() => setLoadingEcg(false)),
       getReports(id).then(({ data }) => setReports(data)).finally(() => setLoadingReports(false)),
+      getAngiogramResult(id).then(({ data }) => setAngioResult(data)).catch(() => setAngioResult(null)),
     ])
   }, [id])
 
@@ -270,12 +299,19 @@ export default function PatientPage() {
 
   const handleAngioUpload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return
-    setAnalyzingAngio(true); setAngioError(''); setAngioResult(null)
+    setAnalyzingAngio(true); setAngioQueued(false); setAngioError(''); setAngioResult(null)
     try {
-      const { data } = await analyzeAngiogram(id, file)
-      setAngioResult(data)
+      await analyzeAngiogram(id, file)
+      setAngioQueued(true)
+      setTimeout(async () => {
+        try {
+          const { data } = await getAngiogramResult(id)
+          setAngioResult(data)
+          setAngioQueued(false)
+        } catch { /* result may still be processing */ }
+      }, 6000)
     } catch (err) {
-      setAngioError(err.response?.data?.detail ?? err.response?.data?.message ?? 'Analysis could not be completed. Please try again.')
+      setAngioError(err.response?.data?.detail ?? err.response?.data?.message ?? 'Analysis could not be queued. Please try again.')
     } finally { setAnalyzingAngio(false); angioRef.current.value = '' }
   }
 
@@ -293,8 +329,9 @@ export default function PatientPage() {
   const handleDownload = async (report) => {
     setDownloadingId(report.id)
     try {
-      const date = fmtDate(report.generatedAt ?? report.createdAt).replace(/ /g, '-')
-      await downloadReport(report.id, `Cardiac-Assessment-${patient?.lastName ?? id}-${date}.pdf`)
+      const dateStr = report.generatedAt ?? report.createdAt
+      const patientName = slugify(getPatientName(patient, id))
+      await downloadReport(report.id, `HeartSync-${patientName}-Cardiac-Assessment-${fmtDateTimeForFile(dateStr)}.pdf`)
     } catch { /* ignore */ }
     finally { setDownloadingId(null) }
   }
@@ -368,7 +405,7 @@ export default function PatientPage() {
                 {[
                   patient.dateOfBirth  && { label: `DOB: ${fmtDate(patient.dateOfBirth)}` },
                   patient.gender       && { label: patient.gender === 'FEMALE' ? 'Female' : patient.gender === 'MALE' ? 'Male' : patient.gender },
-                  patient.contactNumber && { label: patient.contactNumber },
+                  (patient.phone || patient.contactNumber) && { label: patient.phone || patient.contactNumber },
                   patient.bloodType    && { label: `Blood Type: ${patient.bloodType}` },
                 ].filter(Boolean).map(({ label }) => (
                   <span key={label} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-100/70 text-slate-600 text-xs font-medium border border-slate-200/50">
@@ -551,7 +588,7 @@ export default function PatientPage() {
               {/* Upload */}
               <input ref={angioRef} type="file" accept=".dcm,.png,.jpg,.jpeg,.tiff,.tif" className="hidden" onChange={handleAngioUpload} />
               <button onClick={() => angioRef.current?.click()} disabled={analyzingAngio} className="btn-secondary w-full justify-center mb-1">
-                {analyzingAngio ? <><Spinner size="sm" />Analysing image…</> : <>{IcnUp}Upload Coronary Angiogram</>}
+                {analyzingAngio ? <><Spinner size="sm" />Uploading image…</> : <>{IcnUp}Upload Coronary Angiogram</>}
               </button>
               <p className="text-xs text-slate-400 mb-4">Accepts DICOM (.dcm) or image files (.png, .jpg)</p>
 
@@ -562,7 +599,15 @@ export default function PatientPage() {
                 </div>
               )}
 
-              {!angioResult && !analyzingAngio && (
+              {angioQueued && !angioResult && (
+                <Empty
+                  icon={<Spinner />}
+                  text="Angiogram analysis queued"
+                  hint="Segmentation and QCA are running in the background. Results will appear shortly."
+                />
+              )}
+
+              {!angioResult && !analyzingAngio && !angioQueued && (
                 <Empty
                   icon={IcnHeart}
                   text="No angiogram on file"
@@ -687,6 +732,10 @@ export default function PatientPage() {
                         const dateStr  = r.generatedAt ?? r.createdAt
                         const isReady  = r.status === 'COMPLETED'
                         const isFailed = r.status === 'FAILED'
+                        const isDeleting = deletingReportId === r.id
+                        const isConfirmingDelete = confirmDeleteReport === r.id
+                        const patientName = getPatientName(patient, 'Patient')
+                        const displayNumber = reportNumber(i, reports.length)
                         return (
                           <div
                             key={r.id}
@@ -712,26 +761,64 @@ export default function PatientPage() {
 
                             {/* Info */}
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-slate-800">
-                                Cardiac Assessment — {fmtDate(dateStr)}
+                              <p className="text-sm font-semibold text-slate-800 truncate">
+                                Cardiac Assessment Report #{displayNumber}
                               </p>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <p className="text-xs text-slate-400">{fmtTime(dateStr)}</p>
+                                <p className="text-xs text-slate-400 truncate">
+                                  {patientName} - {fmtDate(dateStr)} {fmtTime(dateStr)}
+                                </p>
                                 {isFailed && <span className="text-xs text-red-500">Report could not be generated</span>}
                                 {!isReady && !isFailed && <span className="text-xs text-slate-400">Being prepared…</span>}
                               </div>
                             </div>
 
-                            {/* Download */}
-                            {isReady && (
-                              <button
-                                onClick={() => handleDownload(r)}
-                                disabled={downloadingId === r.id}
-                                className="btn-secondary text-xs px-3 py-1.5 flex-shrink-0 gap-1.5"
-                              >
-                                {downloadingId === r.id ? <Spinner size="sm" /> : IcnDl}
-                                Download
-                              </button>
+                            {/* Actions */}
+                            {isConfirmingDelete ? (
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className="text-xs font-semibold text-red-600 hidden sm:inline">Delete report?</span>
+                                <button
+                                  onClick={() => setConfirmDeleteReport(null)}
+                                  className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteReport(r.id)}
+                                  disabled={isDeleting}
+                                  className="text-xs px-2.5 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                  {isDeleting ? <Spinner size="sm" /> : null}
+                                  Delete
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {isReady && (
+                                  <button
+                                    onClick={() => handleDownload(r)}
+                                    disabled={downloadingId === r.id}
+                                    className="btn-secondary text-xs px-3 py-1.5 gap-1.5"
+                                  >
+                                    {downloadingId === r.id ? <Spinner size="sm" /> : IcnDl}
+                                    Download
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setConfirmDeleteReport(r.id)}
+                                  disabled={isDeleting}
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                  title="Delete report"
+                                >
+                                  {isDeleting ? (
+                                    <Spinner size="sm" />
+                                  ) : (
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
                             )}
                           </div>
                         )

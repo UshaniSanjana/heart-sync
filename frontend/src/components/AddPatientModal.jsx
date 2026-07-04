@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createPatient } from '../api/client.js'
 
-const INITIAL = { firstName: '', lastName: '', dateOfBirth: '', gender: 'MALE', contactNumber: '', email: '' }
+const INITIAL = { firstName: '', lastName: '', dateOfBirth: '', gender: 'MALE', phone: '', email: '' }
 
 export default function AddPatientModal({ onClose, onCreated }) {
   const [form, setForm]     = useState(INITIAL)
@@ -102,7 +102,7 @@ export default function AddPatientModal({ onClose, onCreated }) {
             </div>
 
             <ModalField label="Contact number">
-              <ModalInput name="contactNumber" value={form.contactNumber} onChange={handleChange} placeholder="+1 555 0100" />
+              <ModalInput name="phone" value={form.phone} onChange={handleChange} placeholder="+1 555 0100" />
             </ModalField>
 
             <ModalField label="Email address">
