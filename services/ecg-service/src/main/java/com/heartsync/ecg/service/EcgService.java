@@ -1,18 +1,24 @@
 package com.heartsync.ecg.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heartsync.ecg.config.RabbitMQConfig;
+import com.heartsync.ecg.entity.AiAnalysisOutboxMessage;
 import com.heartsync.ecg.entity.EcgRecord;
-import com.heartsync.ecg.event.EcgAnalyzedEvent;
+import com.heartsync.ecg.event.AiAnalysisRequestedEvent;
+import com.heartsync.ecg.event.AiAnalysisRequestedEvent.AnalysisType;
+import com.heartsync.ecg.repository.AiAnalysisOutboxRepository;
 import com.heartsync.ecg.repository.EcgRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -20,24 +26,16 @@ import java.util.Random;
 public class EcgService {
 
     private final EcgRecordRepository ecgRecordRepository;
-    private final MinioStorageService  minioStorageService;
-    private final RabbitTemplate       rabbitTemplate;
+    private final AiAnalysisOutboxRepository outboxRepository;
+    private final MinioStorageService minioStorageService;
+    private final ObjectMapper objectMapper;
 
     private final Random random = new Random();
 
-    /**
-     * Full upload pipeline:
-     *  1. Upload file to MinIO
-     *  2. Save record to PostgreSQL with ANALYZING status
-     *  3. Run mock ECG analysis (simulates ML model output)
-     *  4. Update record with results + COMPLETED status
-     *  5. Publish EcgAnalyzedEvent to RabbitMQ → triggers AI pipeline
-     */
-    public EcgRecord upload(String patientId, String uploadedBy, MultipartFile file) {
-        // Step 1: Store file
+    @Transactional
+    public EcgRecord upload(String patientId, String uploadedBy, MultipartFile file, String traceId) {
         String fileKey = minioStorageService.upload(patientId, file);
 
-        // Step 2: Create DB record
         EcgRecord record = EcgRecord.builder()
                 .patientId(patientId)
                 .uploadedBy(uploadedBy)
@@ -47,12 +45,20 @@ public class EcgService {
                 .build();
         record = ecgRecordRepository.save(record);
 
-        // Step 3 & 4: Mock analysis
         record = runMockAnalysis(record);
         ecgRecordRepository.save(record);
 
-        // Step 5: Publish event — triggers AI service pipeline
-        EcgAnalyzedEvent event = EcgAnalyzedEvent.builder()
+        String requestId = UUID.randomUUID().toString();
+        String resolvedTraceId = traceId != null && !traceId.isBlank() ? traceId : requestId;
+
+        AiAnalysisRequestedEvent event = AiAnalysisRequestedEvent.builder()
+                .version(1)
+                .requestId(requestId)
+                .idempotencyKey("ecg:" + record.getId())
+                .traceId(resolvedTraceId)
+                .occurredAt(Instant.now())
+                .sourceService("ecg-service")
+                .analysisType(AnalysisType.ECG)
                 .ecgRecordId(record.getId())
                 .patientId(patientId)
                 .fileKey(record.getFileKey())
@@ -64,8 +70,9 @@ public class EcgService {
                 .findings(record.getFindings())
                 .build();
 
-        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE, RabbitMQConfig.ECG_ROUTING_KEY, event);
-        log.info("Published EcgAnalyzedEvent for patient {} record {}", patientId, record.getId());
+        saveOutboxMessage(event);
+        log.info("Saved AI analysis outbox request {} for patient {} ECG {} traceId={}",
+                requestId, patientId, record.getId(), resolvedTraceId);
 
         return record;
     }
@@ -79,23 +86,48 @@ public class EcgService {
         return ecgRecordRepository.findByPatientIdOrderByCreatedAtDesc(patientId);
     }
 
-    /**
-     * Generates realistic ECG values.
-     * In production this calls a real ML inference endpoint.
-     */
+    public void delete(String id) {
+        EcgRecord record = getById(id);
+        if (record.getFileKey() != null) {
+            try {
+                minioStorageService.deleteFile(record.getFileKey());
+            } catch (Exception e) {
+                log.warn("MinIO delete failed for ECG {}: {}", id, e.getMessage());
+            }
+        }
+        ecgRecordRepository.deleteById(id);
+        log.info("Deleted ECG record {}", id);
+    }
+
+    private void saveOutboxMessage(AiAnalysisRequestedEvent event) {
+        try {
+            outboxRepository.save(AiAnalysisOutboxMessage.builder()
+                    .requestId(event.getRequestId())
+                    .idempotencyKey(event.getIdempotencyKey())
+                    .routingKey(RabbitMQConfig.AI_ANALYSIS_ROUTING_KEY)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(AiAnalysisOutboxMessage.Status.PENDING)
+                    .attempts(0)
+                    .createdAt(Instant.now())
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to save AI analysis outbox message", e);
+        }
+    }
+
     private EcgRecord runMockAnalysis(EcgRecord record) {
-        int heartRate = 60 + random.nextInt(40);   // 60–100 bpm
-        boolean abnormal = random.nextDouble() < 0.3; // 30% chance of abnormal finding
+        int heartRate = 60 + random.nextInt(40);
+        boolean abnormal = random.nextDouble() < 0.3;
 
         record.setHeartRate(heartRate);
         record.setRhythm(abnormal ? "Irregular rhythm" : "Normal sinus rhythm");
-        record.setPrInterval(160 + random.nextInt(40));   // 160–200 ms
-        record.setQrsDuration(80  + random.nextInt(20));  // 80–100 ms
-        record.setQtInterval(360  + random.nextInt(60));  // 360–420 ms
+        record.setPrInterval(160 + random.nextInt(40));
+        record.setQrsDuration(80 + random.nextInt(20));
+        record.setQtInterval(360 + random.nextInt(60));
 
         if (abnormal) {
             record.setFindings("Possible anteroseptal infarction (old). " +
-                               "Ischemic ST-T changes in posterior leads.");
+                    "Ischemic ST-T changes in posterior leads.");
         } else {
             record.setFindings("ECG within normal limits. No significant ST-T changes.");
         }

@@ -3,6 +3,7 @@ package com.heartsync.iam.service;
 import com.heartsync.iam.dto.AuthResponse;
 import com.heartsync.iam.dto.LoginRequest;
 import com.heartsync.iam.dto.RegisterRequest;
+import com.heartsync.iam.dto.UserResponse;
 import com.heartsync.iam.entity.User;
 import com.heartsync.iam.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,12 @@ public class AuthService {
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
         return buildResponse(user);
+    }
+
+    public UserResponse getUserById(String id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+        return UserResponse.from(user);
     }
 
     private AuthResponse buildResponse(User user) {

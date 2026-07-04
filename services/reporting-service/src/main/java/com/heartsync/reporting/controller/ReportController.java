@@ -17,6 +17,18 @@ public class ReportController {
 
     private final ReportingService reportingService;
 
+    /**
+     * POST /api/reports/generate — manually trigger report generation.
+     * ecgRecordId is optional: pass it if the patient has an ECG uploaded.
+     * Angiogram results are fetched automatically by patientId if they exist.
+     */
+    @PostMapping("/generate")
+    public ResponseEntity<ClinicalReport> generate(
+            @RequestParam String patientId,
+            @RequestParam(required = false) String ecgRecordId) {
+        return ResponseEntity.ok(reportingService.generateManual(patientId, ecgRecordId));
+    }
+
     /** GET /api/reports/{id} — report metadata */
     @GetMapping("/{id}")
     public ResponseEntity<ClinicalReport> getById(@PathVariable String id) {
@@ -40,5 +52,12 @@ public class ReportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"report-" + id + ".pdf\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
+    }
+
+    /** DELETE /api/reports/{id} */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        reportingService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

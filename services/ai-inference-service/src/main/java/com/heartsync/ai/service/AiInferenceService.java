@@ -3,15 +3,23 @@ package com.heartsync.ai.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heartsync.ai.config.RabbitMQConfig;
+import com.heartsync.ai.document.AiAnalysisOutboxMessage;
 import com.heartsync.ai.document.AnalysisResult;
+import com.heartsync.ai.document.AngiogramResult;
+import com.heartsync.ai.document.ProcessedAiRequest;
+import com.heartsync.ai.dto.AngiogramAnalysisAcceptedResponse;
 import com.heartsync.ai.dto.AngiogramAnalysisResponse;
 import com.heartsync.ai.dto.QcaRequest;
 import com.heartsync.ai.dto.QcaResponse;
 import com.heartsync.ai.dto.SegmentationRequest;
 import com.heartsync.ai.dto.SegmentationResponse;
+import com.heartsync.ai.event.AiAnalysisRequestedEvent;
 import com.heartsync.ai.event.AiCompletedEvent;
-import com.heartsync.ai.event.EcgAnalyzedEvent;
+import com.heartsync.ai.repository.AiAnalysisOutboxRepository;
 import com.heartsync.ai.repository.AnalysisResultRepository;
+import com.heartsync.ai.repository.AngiogramResultRepository;
+import com.heartsync.ai.repository.ProcessedAiRequestRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 
@@ -28,21 +36,17 @@ import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
-
-import java.io.InputStream;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.util.Base64;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+
+import java.util.Base64;
 import java.util.Random;
 import java.util.stream.Collectors;
 
@@ -52,11 +56,15 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AiInferenceService {
 
-    private final AnalysisResultRepository repository;
-    private final RabbitTemplate           rabbitTemplate;
-    private final MinioClient              minioClient;
-    private final ObjectMapper             objectMapper;
-    private final WebClient                aiPythonWebClient;
+    private final AnalysisResultRepository    repository;
+    private final AngiogramResultRepository   angiogramResultRepository;
+    private final AiAnalysisOutboxRepository  outboxRepository;
+    private final ProcessedAiRequestRepository processedAiRequestRepository;
+    private final RabbitTemplate              rabbitTemplate;
+    private final MinioClient                 minioClient;
+    private final ObjectMapper                objectMapper;
+    private final WebClient                   aiPythonWebClient;
+    private final MeterRegistry               meterRegistry;
 
     private final Random random = new Random();
 
@@ -93,7 +101,38 @@ public class AiInferenceService {
     );
 
 
-    public void analyze(EcgAnalyzedEvent event) {
+    public void orchestrate(AiAnalysisRequestedEvent event) {
+        if (event.getVersion() != 1) {
+            throw new IllegalArgumentException("Unsupported AI analysis event version: " + event.getVersion());
+        }
+        String analysisTypeTag = event.getAnalysisType() != null ? event.getAnalysisType().name() : "UNKNOWN";
+        if (processedAiRequestRepository.existsById(event.getIdempotencyKey())) {
+            log.info("Skipping duplicate AI analysis request idempotencyKey={} requestId={}",
+                    event.getIdempotencyKey(), event.getRequestId());
+            meterRegistry.counter("heartsync.ai_analysis.duplicate", "type", analysisTypeTag).increment();
+            return;
+        }
+
+        meterRegistry.counter("heartsync.ai_analysis.requested", "type", analysisTypeTag).increment();
+
+        if (event.getAnalysisType() == AiAnalysisRequestedEvent.AnalysisType.ECG) {
+            analyzeEcg(event);
+        } else if (event.getAnalysisType() == AiAnalysisRequestedEvent.AnalysisType.ANGIOGRAM) {
+            analyzeAngiogramRequest(event);
+        } else {
+            throw new IllegalArgumentException("Unsupported AI analysis type: " + event.getAnalysisType());
+        }
+
+        processedAiRequestRepository.save(ProcessedAiRequest.builder()
+                .idempotencyKey(event.getIdempotencyKey())
+                .requestId(event.getRequestId())
+                .analysisType(event.getAnalysisType().name())
+                .processedAt(Instant.now())
+                .build());
+        meterRegistry.counter("heartsync.ai_analysis.completed", "type", analysisTypeTag).increment();
+    }
+
+    private void analyzeEcg(AiAnalysisRequestedEvent event) {
         log.info("AI analysis started for ECG record {}", event.getEcgRecordId());
 
         AnalysisResult result;
@@ -123,6 +162,11 @@ public class AiInferenceService {
 
         // Step 5: Publish completion event for Reporting Service
         AiCompletedEvent completedEvent = AiCompletedEvent.builder()
+                .version(1)
+                .requestId(event.getRequestId())
+                .idempotencyKey(event.getIdempotencyKey())
+                .traceId(event.getTraceId())
+                .analysisType(event.getAnalysisType().name())
                 .analysisResultId(result.getId())
                 .ecgRecordId(event.getEcgRecordId())
                 .patientId(event.getPatientId())
@@ -130,7 +174,8 @@ public class AiInferenceService {
                 .build();
 
         rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE, RabbitMQConfig.AI_ROUTING_KEY, completedEvent);
-        log.info("Published AiCompletedEvent for patient {} analysis {}", event.getPatientId(), result.getId());
+        log.info("Published AiCompletedEvent requestId={} traceId={} patient={} analysis={}",
+                event.getRequestId(), event.getTraceId(), event.getPatientId(), result.getId());
     }
 
     public AnalysisResult getById(String id) {
@@ -244,7 +289,127 @@ public class AiInferenceService {
                 .build();
     }
 
-    private AnalysisResult runRealSegmentation(EcgAnalyzedEvent event) {
+    public AngiogramAnalysisAcceptedResponse requestAngiogramAnalysis(
+            String patientId,
+            MultipartFile file,
+            String traceId) throws Exception {
+        String requestId = UUID.randomUUID().toString();
+        String resolvedTraceId = traceId != null && !traceId.isBlank() ? traceId : requestId;
+        String imageKey = uploadAngiogramToMinio(patientId, file);
+        String idempotencyKey = "angiogram:" + imageKey;
+
+        AiAnalysisRequestedEvent event = AiAnalysisRequestedEvent.builder()
+                .version(1)
+                .requestId(requestId)
+                .idempotencyKey(idempotencyKey)
+                .traceId(resolvedTraceId)
+                .occurredAt(Instant.now())
+                .sourceService("ai-inference-service")
+                .analysisType(AiAnalysisRequestedEvent.AnalysisType.ANGIOGRAM)
+                .patientId(patientId)
+                .angiogramImageKey(imageKey)
+                .build();
+
+        try {
+            outboxRepository.save(AiAnalysisOutboxMessage.builder()
+                    .requestId(requestId)
+                    .idempotencyKey(idempotencyKey)
+                    .routingKey(RabbitMQConfig.AI_ANALYSIS_ROUTING_KEY)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(AiAnalysisOutboxMessage.Status.PENDING)
+                    .attempts(0)
+                    .createdAt(Instant.now())
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to save angiogram AI analysis outbox message", e);
+        }
+
+        log.info("Saved angiogram AI analysis outbox request {} patient={} imageKey={} traceId={}",
+                requestId, patientId, imageKey, resolvedTraceId);
+
+        return AngiogramAnalysisAcceptedResponse.builder()
+                .requestId(requestId)
+                .idempotencyKey(idempotencyKey)
+                .traceId(resolvedTraceId)
+                .status("ACCEPTED")
+                .message("Angiogram analysis has been queued.")
+                .build();
+    }
+
+    public AngiogramAnalysisResponse analyzeAndSaveAngiogram(String patientId, byte[] imageBytes) {
+        return analyzeAndSaveAngiogram(patientId, null, imageBytes);
+    }
+
+    public AngiogramAnalysisResponse analyzeAndSaveAngiogram(String patientId, String angiogramImageKey, byte[] imageBytes) {
+        AngiogramAnalysisResponse response = analyzeAngiogram(imageBytes);
+
+        int maxStenosis = 0;
+        List<AngiogramResult.LesionResult> lesionDocs = null;
+        if (response.getLesions() != null) {
+            lesionDocs = response.getLesions().stream()
+                    .map(l -> AngiogramResult.LesionResult.builder()
+                            .rank(l.getRank())
+                            .dsPercent(l.getDsPercent())
+                            .severity(l.getSeverity())
+                            .mldPx(l.getMldPx())
+                            .rvdPx(l.getRvdPx())
+                            .lengthPx(l.getLengthPx())
+                            .mldMm(l.getMldMm())
+                            .rvdMm(l.getRvdMm())
+                            .lengthMm(l.getLengthMm())
+                            .build())
+                    .collect(Collectors.toList());
+            maxStenosis = response.getLesions().stream()
+                    .mapToInt(l -> (int) Math.round(l.getDsPercent()))
+                    .max().orElse(0);
+        }
+
+        AngiogramResult saved = AngiogramResult.builder()
+                .patientId(patientId)
+                .angiogramImageKey(angiogramImageKey)
+                .overlayBase64(response.getOverlayBase64())
+                .maskBase64(response.getMaskBase64())
+                .overallRisk(response.getOverallRisk())
+                .confidence(response.getConfidence())
+                .totalBranches(response.getTotalBranches())
+                .calibrated(response.isCalibrated())
+                .estimatedStenosisPercent(maxStenosis)
+                .segmentationTimeMs(response.getSegmentationTimeMs())
+                .qcaTimeMs(response.getQcaTimeMs())
+                .lesions(lesionDocs)
+                .build();
+        angiogramResultRepository.save(saved);
+        return response;
+    }
+
+    public AngiogramResult getLatestAngiogramResult(String patientId) {
+        return angiogramResultRepository.findTopByPatientIdOrderByIdDesc(patientId).orElse(null);
+    }
+
+    private void analyzeAngiogramRequest(AiAnalysisRequestedEvent event) {
+        byte[] imageBytes = fetchFromMinio(event.getAngiogramImageKey());
+        AngiogramAnalysisResponse response = analyzeAndSaveAngiogram(
+                event.getPatientId(), event.getAngiogramImageKey(), imageBytes);
+        AngiogramResult saved = getLatestAngiogramResult(event.getPatientId());
+
+        AiCompletedEvent completedEvent = AiCompletedEvent.builder()
+                .version(1)
+                .requestId(event.getRequestId())
+                .idempotencyKey(event.getIdempotencyKey())
+                .traceId(event.getTraceId())
+                .analysisType(event.getAnalysisType().name())
+                .angiogramResultId(saved != null ? saved.getId() : null)
+                .patientId(event.getPatientId())
+                .overallRisk(response.getOverallRisk())
+                .build();
+
+        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE, RabbitMQConfig.AI_ROUTING_KEY, completedEvent);
+        log.info("Published angiogram AiCompletedEvent requestId={} traceId={} patient={} result={}",
+                event.getRequestId(), event.getTraceId(), event.getPatientId(),
+                saved != null ? saved.getId() : null);
+    }
+
+    private AnalysisResult runRealSegmentation(AiAnalysisRequestedEvent event) {
         byte[] imageBytes = fetchFromMinio(event.getAngiogramImageKey());
         String imageBase64 = Base64.getEncoder().encodeToString(imageBytes);
 
@@ -316,7 +481,7 @@ public class AiInferenceService {
                 .build();
     }
 
-    private AnalysisResult runMockSegmentation(EcgAnalyzedEvent event) {
+    private AnalysisResult runMockSegmentation(AiAnalysisRequestedEvent event) {
         boolean hasAbnormalEcg = event.getFindings() != null &&
                 event.getFindings().contains("infarction");
 
@@ -354,7 +519,7 @@ public class AiInferenceService {
      *   "all_predictions": {"N": 0.94, "S": 0.02, "V": 0.01, ...}
      * }
      */
-    private AnalysisResult buildResultFromModelResponse(EcgAnalyzedEvent event, JsonNode response) {
+    private AnalysisResult buildResultFromModelResponse(AiAnalysisRequestedEvent event, JsonNode response) {
         String prediction = response.get("prediction").asText();
         String label = response.get("label").asText();
         double confidence = response.get("confidence").asDouble();
@@ -393,7 +558,7 @@ public class AiInferenceService {
      * Fallback analysis when the model service is unavailable.
      * Uses data from the ECG service's event to produce a basic result.
      */
-    private AnalysisResult buildFallbackResult(EcgAnalyzedEvent event) {
+    private AnalysisResult buildFallbackResult(AiAnalysisRequestedEvent event) {
         log.warn("Using fallback analysis for ECG record {}", event.getEcgRecordId());
 
         boolean hasAbnormalEcg = event.getFindings() != null &&
@@ -431,6 +596,23 @@ public class AiInferenceService {
             return stream.readAllBytes();
         } catch (Exception e) {
             throw new RuntimeException("Failed to fetch from MinIO: " + objectKey, e);
+        }
+    }
+
+    private String uploadAngiogramToMinio(String patientId, MultipartFile file) {
+        String originalFilename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "angiogram";
+        String objectKey = "angiogram/" + patientId + "/" + UUID.randomUUID() + "_" + originalFilename;
+        try {
+            minioClient.putObject(
+                    PutObjectArgs.builder()
+                            .bucket(minioBucket)
+                            .object(objectKey)
+                            .stream(file.getInputStream(), file.getSize(), -1)
+                            .contentType(file.getContentType() != null ? file.getContentType() : "application/octet-stream")
+                            .build());
+            return objectKey;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to upload angiogram image to MinIO", e);
         }
     }
 

@@ -15,15 +15,16 @@ public class AiCompletedConsumer {
 
     private final ReportingService reportingService;
 
-    /**
-     * Fires when AI Inference Service completes coronary analysis.
-     * This is the trigger for automatic report generation —
-     * the doctor does not need to manually request a report.
-     */
     @RabbitListener(queues = RabbitMQConfig.AI_QUEUE)
     public void onAiCompleted(AiCompletedEvent event) {
-        log.info("Received AiCompletedEvent: analysisId={}, patientId={}",
-                event.getAnalysisResultId(), event.getPatientId());
-        reportingService.generateReport(event);
+        log.info("Received AiCompletedEvent requestId={} type={} analysisId={} angiogramResultId={} patientId={} traceId={}",
+                event.getRequestId(), event.getAnalysisType(), event.getAnalysisResultId(),
+                event.getAngiogramResultId(), event.getPatientId(), event.getTraceId());
+
+        if ("ANGIOGRAM".equals(event.getAnalysisType())) {
+            reportingService.generateManual(event.getPatientId(), null);
+        } else {
+            reportingService.generateReport(event);
+        }
     }
 }

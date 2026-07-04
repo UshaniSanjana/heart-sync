@@ -18,6 +18,7 @@ public class PatientResponse {
     private String gender;
     private String email;
     private String phone;
+    private String contactNumber;
     private String address;
     private String bloodType;
     private String medicalHistory;
@@ -36,6 +37,7 @@ public class PatientResponse {
                 .gender(p.getGender())
                 .email(p.getEmail())
                 .phone(p.getPhone())
+                .contactNumber(p.getPhone())
                 .address(p.getAddress())
                 .bloodType(p.getBloodType())
                 .medicalHistory(p.getMedicalHistory())

@@ -14,7 +14,14 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AiCompletedEvent {
+    @Builder.Default
+    private int version = 1;
+    private String requestId;
+    private String idempotencyKey;
+    private String traceId;
+    private String analysisType;
     private String analysisResultId;
+    private String angiogramResultId;
     private String ecgRecordId;
     private String patientId;
     private String overallRisk;

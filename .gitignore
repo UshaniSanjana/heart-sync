@@ -1,3 +1,11 @@
 target/
 frontend/node_modules/
 .env
+
+# Local assistant files
+.claude/
+CLAUDE.md
+
+# Word documents
+*.doc
+*.docx
